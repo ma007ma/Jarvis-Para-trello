@@ -1,0 +1,44 @@
+<!doctype html>
+<html lang="fr">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width,initial-scale=1">
+  <title>Lab Reactor Test</title>
+  <style>
+    body { margin:0; font-family: system-ui, -apple-system, Segoe UI, sans-serif; background:#101828; color:#fff; }
+    .wrap { padding:24px; max-width:760px; margin:auto; }
+    .card { background:#1d2939; border:1px solid #344054; border-radius:18px; padding:22px; }
+    .pill { display:inline-block; padding:6px 10px; border-radius:99px; background:#12b76a; color:#052e16; font-weight:700; }
+    button { margin-top:16px; padding:12px 18px; border:0; border-radius:12px; font-weight:700; cursor:pointer; }
+    pre { background:#0b1220; padding:12px; border-radius:12px; overflow:auto; }
+  </style>
+</head>
+<body>
+  <div class="wrap">
+    <div class="card">
+      <span class="pill">TEST RÉUSSI</span>
+      <h1>Lab Reactor s'ouvre dans Trello</h1>
+      <p>Si cette fenêtre s'ouvre depuis une carte Trello, le connecteur et l'hébergement GitHub Pages fonctionnent.</p>
+      <button id="ctx">Afficher le contexte Trello</button>
+      <pre id="out">Cliquez sur le bouton pour lire le contexte.</pre>
+    </div>
+  </div>
+  <script src="https://p.trellocdn.com/power-up.min.js"></script>
+  <script>
+    document.getElementById('ctx').addEventListener('click', async function () {
+      const out = document.getElementById('out');
+      try {
+        if (!window.TrelloPowerUp || !window.TrelloPowerUp.iframe) {
+          out.textContent = 'Pas dans une iframe Trello, ou SDK Trello absent.';
+          return;
+        }
+        const t = window.TrelloPowerUp.iframe();
+        const ctx = await t.getContext();
+        out.textContent = JSON.stringify(ctx, null, 2);
+      } catch (e) {
+        out.textContent = String(e && e.stack ? e.stack : e);
+      }
+    });
+  </script>
+</body>
+</html>
