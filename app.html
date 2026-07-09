@@ -22,7 +22,7 @@
       (function () {
         var API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
         var API_BASE = 'https://api.trello.com/1';
-        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-card-context-sync4';
+        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-resilient-save1';
         var ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
 
         function signedUrl(t, url) {
@@ -37,7 +37,7 @@
           ]).then(function (results) {
             var board = results[0] || {};
             var card = results[1] || {};
-            var url = './lab.html?panel=lab&v=lab-reactor-20260709-card-context-sync4';
+            var url = './lab.html?panel=lab&v=lab-reactor-20260709-resilient-save1';
             if (board.id) url += '&boardId=' + encodeURIComponent(board.id);
             if (card.id) url += '&cardId=' + encodeURIComponent(card.id);
             if (card.name) url += '&cardName=' + encodeURIComponent(card.name);
@@ -119,7 +119,7 @@
               var url = './lab.html?panel=lab&mode=create&boardId=' + encodeURIComponent(boardId) +
                 '&cardId=' + encodeURIComponent(card.id) +
                 '&cardName=' + encodeURIComponent(card.name) +
-                '&v=lab-reactor-20260709-created-card-sync2';
+                '&v=lab-reactor-20260709-resilient-save1';
               return t.modal({
                 title: 'Lab Reactor',
                 url: signedUrl(t, url),
@@ -137,7 +137,7 @@
             .then(function (board) {
               var boardId = board && board.id ? board.id : '';
               var url = './lab.html?panel=lab&mode=board-create&boardId=' + encodeURIComponent(boardId) +
-                '&v=lab-reactor-20260709-board-create-sync3';
+                '&v=lab-reactor-20260709-resilient-save1';
               return t.modal({
                 title: 'Creer fiche Lab Reactor',
                 url: signedUrl(t, url),

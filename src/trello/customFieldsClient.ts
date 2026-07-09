@@ -91,8 +91,12 @@ const TRELLO_IFRAME_OPTIONS = {
   appKey: import.meta.env.VITE_TRELLO_API_KEY ?? 'a9936eee9f445b63329fe1ab29b41e1f',
   appName: 'Lab Reactor',
 };
+const REQUEST_SPACING_MS = 350;
+const RETRYABLE_STATUS_CODES = new Set([429, 500, 502, 503, 504]);
 
 export class TrelloCustomFieldsClient {
+  private static requestQueue: Promise<unknown> = Promise.resolve();
+  private static lastRequestAt = 0;
   private readonly apiKey?: string;
   private readonly apiBase: string;
   private readonly fetcher: typeof fetch;
@@ -204,18 +208,17 @@ export class TrelloCustomFieldsClient {
   }
 
   async updateCardCustomFields(cardId: string, items: TrelloFieldPayload[]): Promise<void> {
-    const writes = items.map((item) => {
+    for (const item of items) {
       if (item.empty) {
-        return this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, { method: 'DELETE' });
+        await this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, { method: 'DELETE' });
+        continue;
       }
 
-      return this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, {
+      await this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, {
         method: 'PUT',
         body: item.idValue ? { idValue: item.idValue } : { value: item.value ?? {} },
       });
-    });
-
-    await Promise.all(writes);
+    }
   }
 
   async getOpenLists(boardId: string): Promise<TrelloList[]> {
@@ -258,23 +261,50 @@ export class TrelloCustomFieldsClient {
     }
     Object.entries(options.query ?? {}).forEach(([key, value]) => url.searchParams.set(key, value));
 
+    return TrelloCustomFieldsClient.enqueueRequest(() => this.fetchWithRetry<T>(url.toString(), options));
+  }
+
+  private async fetchWithRetry<T>(url: string, options: { method?: string; body?: unknown; query?: Record<string, string> }): Promise<T> {
     const isFormBody = options.body instanceof URLSearchParams;
-    const response = await this.fetcher(url.toString(), {
+    const requestInit: RequestInit = {
       method: options.method ?? 'GET',
       headers: options.body ? { 'Content-Type': isFormBody ? 'application/x-www-form-urlencoded;charset=UTF-8' : 'application/json' } : undefined,
       body: options.body ? (isFormBody ? options.body.toString() : JSON.stringify(options.body)) : undefined,
-    });
+    };
 
-    if (!response.ok) {
-      const message = await response.text().catch(() => response.statusText);
-      throw new Error(`Trello ${response.status}: ${message || response.statusText}`);
+    let lastMessage = '';
+    for (let attempt = 0; attempt < 4; attempt += 1) {
+      const response = await this.fetcher(url, requestInit);
+      if (response.ok) {
+        if (response.status === 204) {
+          return undefined as T;
+        }
+
+        return response.json() as Promise<T>;
+      }
+
+      lastMessage = await response.text().catch(() => response.statusText);
+      if (!RETRYABLE_STATUS_CODES.has(response.status) || attempt === 3) {
+        throw new Error(`Trello ${response.status}: ${lastMessage || response.statusText}`);
+      }
+
+      await sleep(getRetryDelay(response, attempt));
     }
 
-    if (response.status === 204) {
-      return undefined as T;
-    }
+    throw new Error(lastMessage || 'Erreur Trello inconnue.');
+  }
 
-    return response.json() as Promise<T>;
+  private static enqueueRequest<T>(task: () => Promise<T>): Promise<T> {
+    const run = async () => {
+      const waitFor = REQUEST_SPACING_MS - (Date.now() - TrelloCustomFieldsClient.lastRequestAt);
+      if (waitFor > 0) await sleep(waitFor);
+      TrelloCustomFieldsClient.lastRequestAt = Date.now();
+      return task();
+    };
+
+    const next = TrelloCustomFieldsClient.requestQueue.then(run, run);
+    TrelloCustomFieldsClient.requestQueue = next.catch(() => undefined);
+    return next;
   }
 }
 
@@ -445,6 +475,20 @@ function upsertDescriptionPayload(desc: string, value: string): string {
 
   const afterEnd = end + DESCRIPTION_PAYLOAD_END.length;
   return `${desc.slice(0, start).trimEnd()}\n\n${block}\n\n${desc.slice(afterEnd).trimStart()}`.trim();
+}
+
+function getRetryDelay(response: Response, attempt: number): number {
+  const retryAfter = response.headers.get('Retry-After');
+  const retryAfterMs = retryAfter ? Number(retryAfter) * 1000 : 0;
+  if (Number.isFinite(retryAfterMs) && retryAfterMs > 0) {
+    return Math.min(30000, retryAfterMs);
+  }
+
+  return Math.min(30000, 1200 * 2 ** attempt + Math.floor(Math.random() * 500));
+}
+
+function sleep(ms: number): Promise<void> {
+  return new Promise((resolve) => window.setTimeout(resolve, ms));
 }
 
 function readItemValue(definition: FieldDefinition, field: TrelloCustomField, item?: TrelloCustomFieldItem): LabValue {

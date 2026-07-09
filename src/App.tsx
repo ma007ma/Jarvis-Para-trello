@@ -31,18 +31,22 @@ import {
   ensureCustomFields,
   getBoardCustomFields,
   getCardCustomFieldItems,
+  LAB_REACTOR_PAYLOAD_FIELD_NAME,
   mapLabStateToTrelloPayload,
   mapTrelloToLabState,
   readLabPayloadFromDescription,
-  readLabPayloadField,
   updateCardCustomFields,
   writeLabPayloadToDescription,
   type FieldMapping,
+  type TrelloCustomField,
+  type TrelloCustomFieldItem,
 } from './trello/customFieldsClient';
 import { buildSummary } from './utils/exporters';
 
 const AUTOSAVE_DELAY_MS = 5000;
-const VISIBLE_FIELD_SYNC_INTERVAL_MS = 60000;
+const VISIBLE_FIELD_SYNC_INTERVAL_MS = 120000;
+const RATE_LIMIT_RETRY_MS = 30000;
+const LOCAL_DRAFT_PREFIX = 'lab-reactor-draft:';
 const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
 const FORCE_VISIBLE_FIELD_SYNC = true;
 const TRELLO_IFRAME_OPTIONS = {
@@ -90,6 +94,12 @@ interface TrelloContext {
   cardName: string;
 }
 
+interface SavedStateSource {
+  label: string;
+  state: LabState | null;
+  savedAt?: string | null;
+}
+
 export default function App() {
   const [state, setState] = useState<LabState>(() => createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' }));
   const [context, setContext] = useState<TrelloContext>({ boardId: null, cardId: null, cardName: 'Carte locale' });
@@ -107,9 +117,12 @@ export default function App() {
   ]);
   const saveTimer = useRef<number | null>(null);
   const isApplyingRemote = useRef(false);
+  const latestState = useRef(state);
   const saveInFlight = useRef(false);
+  const pendingSave = useRef(false);
   const lastDurableHash = useRef<string | null>(null);
   const lastVisibleFieldSyncAt = useRef(0);
+  const retryTimer = useRef<number | null>(null);
 
   const validation = useMemo(() => validateLabState(state), [state]);
   const calendarMonths = useMemo(() => generateSchoolCalendarMonths(state.sef_school_year), [state.sef_school_year]);
@@ -167,18 +180,22 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
+      const descriptionPromise = readDescriptionBackup(nextContext.cardId).catch(() => null);
       const fields = await getBoardCustomFields(nextContext.boardId).catch(() => []);
       const nextMapping = buildFieldMapping(fields);
-      const visibleState = await readVisibleCustomFieldState(fields, nextContext.cardId);
-      const sources = await Promise.all([
-        readPayloadBackup(nextContext.boardId, nextContext.cardId).then((stateFromSource) => ({ label: 'payload Trello', state: stateFromSource })).catch(() => ({ label: 'payload Trello', state: null })),
-        readDescriptionBackup(nextContext.cardId).then((stateFromSource) => ({ label: 'description Trello', state: stateFromSource })).catch(() => ({ label: 'description Trello', state: null })),
-        Promise.resolve({ label: 'champs personnalisés Trello', state: visibleState }),
-      ]);
+      const items = fields.length ? await getCardCustomFieldItems(nextContext.cardId).catch(() => []) : [];
+      const visibleState = readVisibleCustomFieldState(fields, items);
+      const sources: SavedStateSource[] = [
+        (await descriptionPromise) ?? { label: 'description Trello', state: null },
+        readPayloadBackupFromItems(fields, items) ?? { label: 'payload Trello', state: null },
+        { label: 'champs personnalisés Trello', state: visibleState },
+        readLocalDraft(nextContext.boardId, nextContext.cardId) ?? { label: 'brouillon local', state: null },
+      ];
       const bestSource = chooseBestSavedState(sources);
       const nextState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
 
       isApplyingRemote.current = true;
+      latestState.current = nextState;
       setMapping(nextMapping);
       setState(nextState);
       lastDurableHash.current = calculateSyncHash(nextState);
@@ -203,8 +220,12 @@ export default function App() {
     setSelectedDateTarget(toDateTarget(next, activeSession));
   }, [activeSession, selectedDateTarget, visibleMilestones]);
 
+  useEffect(() => {
+    latestState.current = state;
+  }, [state]);
+
   const saveNow = useCallback(
-    async (stateToSave = state) => {
+    async (stateToSave = latestState.current) => {
       if (!context.cardId || !context.boardId) {
         setMessage('Ouvrez depuis une carte Trello pour activer la synchro automatique.');
         return;
@@ -214,10 +235,16 @@ export default function App() {
         return;
       }
       if (saveInFlight.current) {
+        pendingSave.current = true;
         return;
       }
 
       saveInFlight.current = true;
+      let scheduledRetry = false;
+      if (retryTimer.current) {
+        window.clearTimeout(retryTimer.current);
+        retryTimer.current = null;
+      }
       setSyncStatus('saving');
       setMessage('Sauvegarde dans Trello...');
       try {
@@ -249,12 +276,27 @@ export default function App() {
         setMessage(shouldMirrorVisibleFields ? 'Sauvegardé dans Lab Reactor et champs Trello.' : 'Sauvegardé dans Lab Reactor.');
       } catch (error) {
         setSyncStatus('error');
-        setMessage(error instanceof Error ? error.message : 'Erreur de sauvegarde.');
+        const errorMessage = error instanceof Error ? error.message : 'Erreur de sauvegarde.';
+        if (isRateLimitError(errorMessage)) {
+          scheduledRetry = true;
+          retryTimer.current = window.setTimeout(() => {
+            const retryState = pendingSave.current ? latestState.current : stateToSave;
+            pendingSave.current = false;
+            void saveNow(retryState);
+          }, RATE_LIMIT_RETRY_MS);
+          setMessage('Trello limite temporairement les requêtes. Brouillon conservé, nouvel essai automatique dans 30 secondes.');
+        } else {
+          setMessage(errorMessage);
+        }
       } finally {
         saveInFlight.current = false;
+        if (!scheduledRetry && pendingSave.current) {
+          pendingSave.current = false;
+          window.setTimeout(() => void saveNow(latestState.current), 250);
+        }
       }
     },
-    [context.boardId, context.cardId, mapping, state],
+    [context.boardId, context.cardId, mapping],
   );
 
   const createTrelloCardFromBoard = useCallback(async () => {
@@ -313,6 +355,7 @@ export default function App() {
 
   useEffect(() => {
     if (!didLoad || !hasTrelloContext || isApplyingRemote.current) return;
+    saveLocalDraft(context.boardId, context.cardId, state);
     if (saveTimer.current) window.clearTimeout(saveTimer.current);
     saveTimer.current = window.setTimeout(() => void saveNow(), AUTOSAVE_DELAY_MS);
     return () => {
@@ -757,12 +800,12 @@ function FieldInput({ field, value, onChange }: { field: FieldDefinition; value:
   );
 }
 
-function chooseBestSavedState(sources: Array<{ label: string; state: LabState | null }>): { label: string; state: LabState } | null {
+function chooseBestSavedState(sources: SavedStateSource[]): { label: string; state: LabState } | null {
   const ranked = sources
-    .filter((source): source is { label: string; state: LabState } => Boolean(source.state))
-    .map((source) => ({ ...source, score: scoreSavedState(source.state) }))
+    .filter((source): source is SavedStateSource & { state: LabState } => Boolean(source.state))
+    .map((source) => ({ ...source, score: scoreSavedState(source.state), savedAtMs: source.savedAt ? Date.parse(source.savedAt) || 0 : 0 }))
     .filter((source) => source.score > 0)
-    .sort((left, right) => right.score - left.score);
+    .sort((left, right) => right.score - left.score || right.savedAtMs - left.savedAtMs);
 
   return ranked[0] ? { label: ranked[0].label, state: ranked[0].state } : null;
 }
@@ -776,6 +819,35 @@ function scoreSavedState(savedState: LabState): number {
     if (visibleKeys.has(key)) return score + 2;
     return score + 1;
   }, 0);
+}
+
+function localDraftKey(boardId: string, cardId: string): string {
+  return `${LOCAL_DRAFT_PREFIX}${boardId}:${cardId}`;
+}
+
+function readLocalDraft(boardId: string, cardId: string): SavedStateSource | null {
+  try {
+    const raw = window.localStorage.getItem(localDraftKey(boardId, cardId));
+    if (!raw) return null;
+    const parsed = JSON.parse(raw) as { savedAt?: string; state?: Partial<LabState> };
+    const stateFromDraft = parseSavedState(parsed.state);
+    return stateFromDraft ? { label: 'brouillon local', state: stateFromDraft, savedAt: parsed.savedAt ?? null } : null;
+  } catch {
+    return null;
+  }
+}
+
+function saveLocalDraft(boardId: string | null, cardId: string | null, stateToSave: LabState): void {
+  if (!boardId || !cardId) return;
+  try {
+    window.localStorage.setItem(localDraftKey(boardId, cardId), JSON.stringify({ savedAt: new Date().toISOString(), state: stateToSave }));
+  } catch {
+    // Local draft is best-effort only.
+  }
+}
+
+function isRateLimitError(message: string): boolean {
+  return message.includes('429') || message.includes('RATE_LIMIT') || message.includes('API_TOKEN_LIMIT_EXCEEDED');
 }
 
 async function readTrelloContext(): Promise<TrelloContext> {
@@ -808,36 +880,32 @@ async function readTrelloContext(): Promise<TrelloContext> {
   }
 }
 
-async function readPayloadBackup(boardId: string, cardId: string): Promise<LabState | null> {
-  try {
-    const value = await readLabPayloadField(boardId, cardId);
-    return parseSavedState(value);
-  } catch {
-    return null;
-  }
-}
-
-async function readVisibleCustomFieldState(fields: Awaited<ReturnType<typeof getBoardCustomFields>>, cardId: string): Promise<LabState | null> {
+function readPayloadBackupFromItems(fields: TrelloCustomField[], items: TrelloCustomFieldItem[]): SavedStateSource | null {
   if (!fields.length) return null;
-  try {
-    const items = await getCardCustomFieldItems(cardId);
-    return mapTrelloToLabState(fields, items);
-  } catch {
-    return null;
-  }
+  const payloadField = fields.find((field) => field.name === LAB_REACTOR_PAYLOAD_FIELD_NAME);
+  if (!payloadField) return null;
+  const item = items.find((candidate) => candidate.idCustomField === payloadField.id);
+  const parsed = parseSavedStateSource(item?.value?.text);
+  return parsed ? { label: 'payload Trello', ...parsed } : null;
 }
 
-async function readDescriptionBackup(cardId: string): Promise<LabState | null> {
+function readVisibleCustomFieldState(fields: TrelloCustomField[], items: TrelloCustomFieldItem[]): LabState | null {
+  if (!fields.length) return null;
+  return mapTrelloToLabState(fields, items);
+}
+
+async function readDescriptionBackup(cardId: string): Promise<SavedStateSource | null> {
   try {
     const value = await readLabPayloadFromDescription(cardId);
-    return parseSavedState(value);
+    const parsed = parseSavedStateSource(value);
+    return parsed ? { label: 'description Trello', ...parsed } : null;
   } catch {
     return null;
   }
 }
 
 async function saveDurableState(_boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
-  const serialized = JSON.stringify(stateToSave);
+  const serialized = JSON.stringify({ savedAt: new Date().toISOString(), state: stateToSave });
   const writes: Array<Promise<unknown>> = [
     writeLabPayloadToDescription(cardId, serialized),
   ];
@@ -849,11 +917,25 @@ async function saveDurableState(_boardId: string, cardId: string, stateToSave: L
 }
 
 function parseSavedState(value: unknown): LabState | null {
+  return parseSavedStateSource(value)?.state ?? null;
+}
+
+function parseSavedStateSource(value: unknown): { state: LabState; savedAt?: string | null } | null {
   if (!value) return null;
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     if (!parsed || typeof parsed !== 'object') return null;
-    return createEmptyLabState(parsed as Partial<LabState>);
+    if ('state' in parsed && parsed.state && typeof parsed.state === 'object') {
+      return {
+        state: createEmptyLabState(parsed.state as Partial<LabState>),
+        savedAt: typeof parsed.savedAt === 'string' ? parsed.savedAt : null,
+      };
+    }
+
+    return {
+      state: createEmptyLabState(parsed as Partial<LabState>),
+      savedAt: typeof (parsed as Partial<LabState>).sef_last_synced_at === 'string' ? String((parsed as Partial<LabState>).sef_last_synced_at) : null,
+    };
   } catch {
     return null;
   }
