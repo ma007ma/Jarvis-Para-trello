@@ -2,15 +2,18 @@
 import {
   AlertTriangle,
   CalendarDays,
+  CheckCircle2,
   Clipboard,
   Copy,
   Download,
   ExternalLink,
   FlaskConical,
+  MousePointerClick,
   RefreshCcw,
   Save,
   Sparkles,
   Wand2,
+  Zap,
 } from 'lucide-react';
 import { FIELD_BY_KEY, FIELD_REGISTRY, FIELD_SECTIONS, getFieldsBySection, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
 import { cleanAfterDuplication } from './domain/duplication';
@@ -39,12 +42,27 @@ import { buildCsv, buildSummary, downloadCsv } from './utils/exporters';
 
 const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
+const REQUIRED_MAPPING_COUNT = FIELD_REGISTRY.length;
 const QUICK_FIELD_COLUMNS: FieldKey[][] = [
   ['sef_contact_name', 'sef_contact_phone', 'sef_contact_email', 'sef_program'],
   ['sef_start_time', 'sef_end_time', 'sef_room'],
   ['sef_school_name', 'sef_session_name', 'sef_grade_range', 'sef_day_of_week'],
 ];
 const EXTRA_QUICK_FIELDS: FieldKey[] = ['sef_school_year', 'sef_group_target', 'sef_status', 'sef_season'];
+const PRIORITY_FIELD_KEYS: FieldKey[] = [
+  'sef_school_name',
+  'sef_contact_name',
+  'sef_contact_phone',
+  'sef_contact_email',
+  'sef_program',
+  'sef_day_of_week',
+  'sef_start_time',
+  'sef_end_time',
+  'sef_room',
+  'sef_grade_range',
+  'sef_school_year',
+  'sef_status',
+];
 
 type SyncStatus = 'idle' | 'loading' | 'saving' | 'synced' | 'error';
 
@@ -62,6 +80,7 @@ export default function App() {
   const [message, setMessage] = useState('Mode local prêt.');
   const [didLoad, setDidLoad] = useState(false);
   const [activeSession, setActiveSession] = useState<SessionNumber>(1);
+  const [selectedMilestoneKey, setSelectedMilestoneKey] = useState<FieldKey | null>(null);
   const saveTimer = useRef<number | null>(null);
   const isApplyingRemote = useRef(false);
 
@@ -69,6 +88,17 @@ export default function App() {
   const calendarMonths = useMemo(() => generateSchoolCalendarMonths(state.sef_school_year), [state.sef_school_year]);
   const milestoneDates = useMemo(() => getAllSavedMilestoneDates(state), [state]);
   const activeMilestones = useMemo(() => getSessionMilestones(state, activeSession), [activeSession, state]);
+  const selectedMilestone = useMemo(
+    () => activeMilestones.find((milestone) => milestone.fieldKey === selectedMilestoneKey && milestone.fieldKey) ?? activeMilestones.find((milestone) => milestone.fieldKey),
+    [activeMilestones, selectedMilestoneKey],
+  );
+  const priorityCompletion = useMemo(() => {
+    const filled = PRIORITY_FIELD_KEYS.filter((key) => {
+      const value = state[key];
+      return value !== null && value !== '' && value !== false;
+    }).length;
+    return Math.round((filled / PRIORITY_FIELD_KEYS.length) * 100);
+  }, [state]);
   const hasTrelloContext = Boolean(context.boardId && context.cardId);
 
   const loadFromTrello = useCallback(async () => {
@@ -84,9 +114,18 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
-      const fields = await getBoardCustomFields(nextContext.boardId);
+      let fields = await getBoardCustomFields(nextContext.boardId);
+      let nextMapping = buildFieldMapping(fields);
+
+      if (Object.keys(nextMapping).length < REQUIRED_MAPPING_COUNT) {
+        setMessage('Préparation des champs Trello...');
+        const ensured = await ensureCustomFields(nextContext.boardId);
+        nextMapping = ensured.mapping;
+        fields = await getBoardCustomFields(nextContext.boardId);
+        nextMapping = buildFieldMapping(fields);
+      }
+
       const items = await getCardCustomFieldItems(nextContext.cardId);
-      const nextMapping = buildFieldMapping(fields);
       const nextState = mapTrelloToLabState(fields, items);
 
       isApplyingRemote.current = true;
@@ -94,7 +133,7 @@ export default function App() {
       setState(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage('Synchronisé depuis Trello.');
+      setMessage('Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -106,6 +145,11 @@ export default function App() {
       isApplyingRemote.current = false;
     }
   }, []);
+
+  useEffect(() => {
+    if (selectedMilestoneKey && activeMilestones.some((milestone) => milestone.fieldKey === selectedMilestoneKey)) return;
+    setSelectedMilestoneKey(activeMilestones.find((milestone) => milestone.fieldKey)?.fieldKey ?? null);
+  }, [activeMilestones, selectedMilestoneKey]);
 
   const saveNow = useCallback(
     async (stateToSave = state) => {
@@ -189,6 +233,12 @@ export default function App() {
     }
   };
 
+  const updateSelectedMilestoneDate = (date: string) => {
+    if (!selectedMilestone?.fieldKey) return;
+    updateField(selectedMilestone.fieldKey, date);
+    setMessage(`${selectedMilestone.label}: ${date}.`);
+  };
+
   const initializeFields = async () => {
     if (!context.boardId) {
       setMessage("Ouvrez le Power-Up depuis une carte Trello avant d'initialiser les champs.");
@@ -242,17 +292,20 @@ export default function App() {
           <div>
             <p className="eyebrow">Sciences en Folie</p>
             <h1>Lab Reactor</h1>
-            <p className="hero-copy">Fiche école, calendrier scolaire, sessions et jalons Trello.</p>
+            <p className="hero-copy">{context.cardName}</p>
           </div>
         </div>
-        <div className={`sync-pill ${syncStatus}`}><span />{labelForSync(syncStatus)}</div>
+        <div className="header-metrics">
+          <div className="metric-pill"><Zap size={16} />{priorityCompletion}% fiche</div>
+          <div className={`sync-pill ${syncStatus}`}><span />{labelForSync(syncStatus)}</div>
+        </div>
       </header>
 
       <section className="quick-sheet" aria-label="Fiche rapide">
         <div className="section-heading">
           <div>
-            <p className="eyebrow">Section 1</p>
-            <h2>Fiche rapide</h2>
+            <p className="eyebrow">Saisie rapide</p>
+            <h2>Les champs qui comptent</h2>
           </div>
           <strong>{valueOrDash(state.sef_school_year)} · {valueOrDash(state.sef_status)}</strong>
         </div>
@@ -268,49 +321,68 @@ export default function App() {
         </div>
       </section>
 
-      <section className="calendar-section" aria-label="Calendrier scolaire">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Section 2</p>
-            <h2>Calendrier scolaire {valueOrDash(state.sef_school_year)}</h2>
+      <section className="planning-board" aria-label="Dates et calendrier">
+        <div className="planning-sidebar">
+          <div className="section-heading compact">
+            <div>
+              <p className="eyebrow">Dates</p>
+              <h2>Session {activeSession}</h2>
+            </div>
+            <div className="session-tabs">
+              {SESSION_NUMBERS.map((session) => (
+                <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
+                  {session}
+                </button>
+              ))}
+            </div>
           </div>
-          <CalendarDays size={22} />
-        </div>
-        <div className="calendar-legend">
-          {(['purple', 'red', 'blue', 'yellow', 'gray', 'green', 'orange'] as MilestoneTone[]).map((tone) => <span key={tone} className={`legend-dot ${tone}`}>{toneLabel(tone)}</span>)}
-        </div>
-        <div className="calendar-grid">
-          {calendarMonths.map((month) => <MiniCalendar key={`${month.year}-${month.month}`} month={month} dates={milestoneDates} />)}
-        </div>
-      </section>
-
-      <section className="sessions-section" aria-label="Sessions et événements">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Section 3</p>
-            <h2>Sessions / événements</h2>
+          <div className="selected-step">
+            <MousePointerClick size={18} />
+            <div>
+              <span>Étape active</span>
+              <strong>{selectedMilestone?.label ?? 'Aucune étape'}</strong>
+            </div>
           </div>
-          <div className="session-tabs">
-            {SESSION_NUMBERS.map((session) => (
-              <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
-                Session {session}
+          <div className="milestone-list">
+            {activeMilestones.map((milestone) => (
+              <button
+                key={milestone.id}
+                type="button"
+                className={`milestone-row ${milestone.tone} ${selectedMilestone?.fieldKey === milestone.fieldKey ? 'selected' : ''}`}
+                disabled={!milestone.fieldKey}
+                onClick={() => milestone.fieldKey && setSelectedMilestoneKey(milestone.fieldKey)}
+              >
+                <span className="milestone-tone" />
+                <strong>{milestone.label}</strong>
+                <span>{milestone.date ?? '--'}</span>
+                <em>{milestone.status}</em>
               </button>
             ))}
           </div>
         </div>
-        <div className="milestone-list">
-          {activeMilestones.map((milestone) => (
-            <div key={milestone.id} className={`milestone-row ${milestone.tone} ${milestone.status.replace("'", '').replace(' ', '-')}`}>
-              <span className="milestone-tone" />
-              <strong>{milestone.label}</strong>
-              {milestone.fieldKey ? (
-                <input type="date" value={milestone.date ?? ''} onChange={(event) => updateField(milestone.fieldKey as FieldKey, event.target.value || null)} />
-              ) : (
-                <input type="date" value={milestone.date ?? ''} disabled title="Date générée depuis le début des cours" />
-              )}
-              <em>{milestone.status}</em>
+        <div className="calendar-section">
+          <div className="section-heading">
+            <div>
+              <p className="eyebrow">Calendrier</p>
+              <h2>{valueOrDash(state.sef_school_year)}</h2>
             </div>
-          ))}
+            <CalendarDays size={22} />
+          </div>
+          <div className="calendar-legend">
+            {(['purple', 'red', 'blue', 'yellow', 'gray', 'green', 'orange'] as MilestoneTone[]).map((tone) => <span key={tone} className={`legend-dot ${tone}`}>{toneLabel(tone)}</span>)}
+          </div>
+          <div className="calendar-grid">
+            {calendarMonths.map((month) => (
+              <MiniCalendar
+                key={`${month.year}-${month.month}`}
+                month={month}
+                dates={milestoneDates}
+                selectedDate={selectedMilestone?.date ?? null}
+                selectedTone={selectedMilestone?.tone ?? 'blue'}
+                onDateSelect={updateSelectedMilestoneDate}
+              />
+            ))}
+          </div>
         </div>
       </section>
 
@@ -335,11 +407,16 @@ export default function App() {
         <section className="actions-panel" aria-label="Actions rapides">
           <div className="section-heading">
             <div>
-              <p className="eyebrow">Section 5</p>
-              <h2>Actions rapides</h2>
+              <p className="eyebrow">Trello</p>
+              <h2>Synchro</h2>
             </div>
           </div>
           <p className="status-message"><strong>{message}</strong><span>{hasTrelloContext ? 'Connecté à Trello' : 'Mode local'}</span></p>
+          <div className="sync-checks">
+            <span className={context.cardId ? 'ok' : ''}><CheckCircle2 size={15} />Carte</span>
+            <span className={context.boardId ? 'ok' : ''}><CheckCircle2 size={15} />Board</span>
+            <span className={Object.keys(mapping).length >= REQUIRED_MAPPING_COUNT ? 'ok' : ''}><CheckCircle2 size={15} />Champs SEF</span>
+          </div>
           <div className="actions-grid">
             <button type="button" onClick={loadFromTrello}><RefreshCcw size={18} />Synchroniser depuis Trello</button>
             <button type="button" onClick={() => void saveNow()}><Save size={18} />Sauvegarder maintenant</button>
@@ -370,8 +447,26 @@ export default function App() {
   );
 }
 
-function MiniCalendar({ month, dates }: { month: ReturnType<typeof generateSchoolCalendarMonths>[number]; dates: Array<{ date: string; tone: MilestoneTone; label: string }> }) {
-  const datesByDay = new Map(dates.filter((item) => Number(item.date.slice(0, 4)) === month.year && Number(item.date.slice(5, 7)) === month.month + 1).map((item) => [Number(item.date.slice(8, 10)), item]));
+function MiniCalendar({
+  month,
+  dates,
+  selectedDate,
+  selectedTone,
+  onDateSelect,
+}: {
+  month: ReturnType<typeof generateSchoolCalendarMonths>[number];
+  dates: Array<{ date: string; tone: MilestoneTone; label: string }>;
+  selectedDate: string | null;
+  selectedTone: MilestoneTone;
+  onDateSelect: (date: string) => void;
+}) {
+  const datesByDay = new Map<number, Array<{ date: string; tone: MilestoneTone; label: string }>>();
+  for (const item of dates) {
+    if (Number(item.date.slice(0, 4)) !== month.year || Number(item.date.slice(5, 7)) !== month.month + 1) continue;
+    const day = Number(item.date.slice(8, 10));
+    datesByDay.set(day, [...(datesByDay.get(day) ?? []), item]);
+  }
+
   return (
     <article className="mini-calendar">
       <h3>{month.label}</h3>
@@ -379,13 +474,32 @@ function MiniCalendar({ month, dates }: { month: ReturnType<typeof generateSchoo
       {month.weeks.map((week, index) => (
         <div className="week" key={index}>
           {week.map((day, cell) => {
-            const event = day ? datesByDay.get(day) : undefined;
-            return <span key={`${index}-${cell}`} className={event ? `marked ${event.tone}` : ''} title={event?.label}>{day ?? ''}</span>;
+            if (!day) return <span key={`${index}-${cell}`} />;
+            const isoDate = formatCalendarDate(month.year, month.month, day);
+            const events = datesByDay.get(day) ?? [];
+            const primaryEvent = events[0];
+            const isSelected = selectedDate === isoDate;
+            return (
+              <button
+                key={`${index}-${cell}`}
+                type="button"
+                className={`${primaryEvent ? `marked ${primaryEvent.tone}` : ''} ${isSelected ? `selected-date ${selectedTone}` : ''}`}
+                title={events.map((event) => event.label).join('\n') || isoDate}
+                onClick={() => onDateSelect(isoDate)}
+              >
+                <span>{day}</span>
+                {events.length > 0 && <i>{events.length}</i>}
+              </button>
+            );
           })}
         </div>
       ))}
     </article>
   );
+}
+
+function formatCalendarDate(year: number, month: number, day: number): string {
+  return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
 function FieldSectionView({ title, fields, state, onChange }: { title: string; fields: FieldDefinition[]; state: LabState; onChange: (key: FieldKey, value: LabValue) => void }) {
