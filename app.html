@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="fr">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Lab Reactor Trello Connector</title>
+    <style>
+      body { margin: 0; font-family: system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif; background: #f7f4ff; color: #271343; }
+      main { min-height: 100vh; display: grid; place-items: center; padding: 24px; text-align: center; }
+      strong { color: #6d28d9; }
+    </style>
+  </head>
+  <body>
+    <main>
+      <div>
+        <strong>Lab Reactor</strong>
+        <p>Connecteur Trello chargé. Ouvrez une carte Trello pour afficher la fiche.</p>
+      </div>
+    </main>
+    <script src="https://p.trellocdn.com/power-up.min.js"></script>
+    <script>
+      (function () {
+        var API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
+        var API_BASE = 'https://api.trello.com/1';
+        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-sync2';
+        var ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
+
+        function signedUrl(t, url) {
+          var target = url || PANEL_URL;
+          return t && t.signUrl ? t.signUrl(target) : target;
+        }
+
+        function openPanel(t) {
+          return t.modal({
+            title: 'Lab Reactor',
+            url: signedUrl(t),
+            height: 920,
+            fullscreen: true
+          });
+        }
+
+        function getToken(t) {
+          var restApi = t.getRestApi && t.getRestApi();
+          if (!restApi) return Promise.resolve(null);
+          return restApi.getToken().then(function (token) {
+            if (token) return token;
+            return restApi.authorize({
+              scope: 'read,write',
+              expiration: 'never',
+              name: 'Lab Reactor'
+            });
+          });
+        }
+
+        function trelloFetch(path, token, options) {
+          var url = new URL(API_BASE + path);
+          url.searchParams.set('key', API_KEY);
+          if (token) url.searchParams.set('token', token);
+          if (options && options.query) {
+            Object.keys(options.query).forEach(function (key) {
+              url.searchParams.set(key, options.query[key]);
+            });
+          }
+          return fetch(url.toString(), options || {}).then(function (response) {
+            if (!response.ok) {
+              return response.text().then(function (message) {
+                throw new Error(message || response.statusText);
+              });
+            }
+            return response.json();
+          });
+        }
+
+        function alertUser(t, message, display) {
+          if (t.alert) return t.alert({ message: message, duration: 8, display: display || 'info' });
+          return Promise.resolve();
+        }
+
+        function createLabCard(t) {
+          var boardId;
+          var tokenValue;
+
+          return Promise.all([t.board('id'), getToken(t)])
+            .then(function (results) {
+              boardId = results[0] && results[0].id;
+              tokenValue = results[1];
+              if (!boardId || !tokenValue) throw new Error('Autorisation Trello manquante.');
+              return trelloFetch('/boards/' + boardId + '/lists?filter=open', tokenValue);
+            })
+            .then(function (lists) {
+              if (!lists || !lists.length) throw new Error('Aucune liste ouverte trouvée sur ce tableau.');
+              return trelloFetch('/cards', tokenValue, {
+                method: 'POST',
+                query: {
+                  idList: lists[0].id,
+                  name: 'Nouvelle fiche Lab Reactor',
+                  desc: 'Fiche créée depuis le Power-Up Lab Reactor.'
+                }
+              });
+            })
+            .then(function (card) {
+              var url = './lab.html?panel=lab&mode=create&boardId=' + encodeURIComponent(boardId) +
+                '&cardId=' + encodeURIComponent(card.id) +
+                '&cardName=' + encodeURIComponent(card.name) +
+                '&v=lab-reactor-20260709-created-card-sync2';
+              return t.modal({
+                title: 'Lab Reactor',
+                url: signedUrl(t, url),
+                height: 920,
+                fullscreen: true
+              });
+            })
+            .catch(function (error) {
+              return alertUser(t, 'Lab Reactor: ' + (error && error.message ? error.message : String(error)), 'error');
+            });
+        }
+
+        if (!window.TrelloPowerUp) return;
+
+        try {
+          window.TrelloPowerUp.initialize({
+            'card-buttons': function () {
+              return [{
+                text: 'Lab Reactor',
+                icon: ICON_URL,
+                callback: openPanel
+              }];
+            },
+            'board-buttons': function () {
+              return [
+                {
+                  text: 'Créer fiche Lab Reactor',
+                  icon: ICON_URL,
+                  callback: createLabCard
+                },
+                {
+                  text: 'Ouvrir Lab Reactor',
+                  icon: ICON_URL,
+                  callback: openPanel
+                }
+              ];
+            },
+            'card-back-section': function (t) {
+              return {
+                title: 'Lab Reactor',
+                icon: ICON_URL,
+                content: {
+                  type: 'iframe',
+                  url: signedUrl(t),
+                  height: 760
+                },
+                action: {
+                  text: 'Ouvrir en grand',
+                  callback: openPanel
+                }
+              };
+            }
+          }, {
+            appKey: API_KEY
+          });
+        } catch (error) {
+          console.error('Lab Reactor connector failed', error);
+        }
+      })();
+    </script>
+  </body>
+</html>
