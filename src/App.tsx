@@ -166,15 +166,13 @@ export default function App() {
     setMessage('Synchronisation depuis Trello...');
     try {
       const ensureResult = await ensureCustomFields(nextContext.boardId).catch(() => null);
-      const fields = await getBoardCustomFields(nextContext.boardId);
+      const fields = await getBoardCustomFields(nextContext.boardId).catch(() => []);
       const nextMapping = ensureResult && Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
-
-      const items = await getCardCustomFieldItems(nextContext.cardId);
-      const visibleState = mapTrelloToLabState(fields, items);
+      const visibleState = await readVisibleCustomFieldState(fields, nextContext.cardId);
       const sources = await Promise.all([
-        readPluginDataState().then((stateFromSource) => ({ label: 'pluginData Trello', state: stateFromSource })),
-        readPayloadBackup(nextContext.boardId, nextContext.cardId).then((stateFromSource) => ({ label: 'payload Trello', state: stateFromSource })),
-        readDescriptionBackup(nextContext.cardId).then((stateFromSource) => ({ label: 'description Trello', state: stateFromSource })),
+        readPluginDataState().then((stateFromSource) => ({ label: 'pluginData Trello', state: stateFromSource })).catch(() => ({ label: 'pluginData Trello', state: null })),
+        readPayloadBackup(nextContext.boardId, nextContext.cardId).then((stateFromSource) => ({ label: 'payload Trello', state: stateFromSource })).catch(() => ({ label: 'payload Trello', state: null })),
+        readDescriptionBackup(nextContext.cardId).then((stateFromSource) => ({ label: 'description Trello', state: stateFromSource })).catch(() => ({ label: 'description Trello', state: null })),
         Promise.resolve({ label: 'champs personnalisés Trello', state: visibleState }),
       ]);
       const bestSource = chooseBestSavedState(sources);
@@ -820,6 +818,16 @@ async function readPayloadBackup(boardId: string, cardId: string): Promise<LabSt
   try {
     const value = await readLabPayloadField(boardId, cardId);
     return parseSavedState(value);
+  } catch {
+    return null;
+  }
+}
+
+async function readVisibleCustomFieldState(fields: Awaited<ReturnType<typeof getBoardCustomFields>>, cardId: string): Promise<LabState | null> {
+  if (!fields.length) return null;
+  try {
+    const items = await getCardCustomFieldItems(cardId);
+    return mapTrelloToLabState(fields, items);
   } catch {
     return null;
   }

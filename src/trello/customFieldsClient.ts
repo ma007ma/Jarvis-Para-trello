@@ -240,7 +240,7 @@ export class TrelloCustomFieldsClient {
   async updateCardDescription(cardId: string, desc: string): Promise<void> {
     await this.request<void>(`/cards/${cardId}`, {
       method: 'PUT',
-      query: { desc },
+      body: { desc },
     });
   }
 
