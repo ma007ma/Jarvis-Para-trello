@@ -124,6 +124,13 @@ export type FieldKey = (typeof FIELD_REGISTRY)[number]['key'];
 export const FIELD_BY_KEY = Object.fromEntries(FIELD_REGISTRY.map((field) => [field.key, field])) as Record<FieldKey, FieldDefinition>;
 export const FIELD_BY_TRELLO_NAME = Object.fromEntries(FIELD_REGISTRY.map((field) => [field.trelloName, field])) as Record<string, FieldDefinition>;
 
+export const COURSE_DATE_FIELD_KEYS: readonly FieldKey[] = [
+  'sef_s1_course_dates',
+  'sef_s2_course_dates',
+  'sef_s3_course_dates',
+  'sef_s4_course_dates',
+];
+
 export const TECHNICAL_FIELD_KEYS: readonly FieldKey[] = [
   'sef_validation_score',
   'sef_validation_status',
@@ -159,10 +166,6 @@ export const VISIBLE_TRELLO_FIELD_KEYS: readonly FieldKey[] = [
   'sef_s3_price',
   'sef_s4_theme',
   'sef_s4_price',
-  'sef_s1_course_dates',
-  'sef_s2_course_dates',
-  'sef_s3_course_dates',
-  'sef_s4_course_dates',
   'sef_validation_score',
   'sef_validation_status',
   'sef_last_synced_at',
@@ -170,6 +173,10 @@ export const VISIBLE_TRELLO_FIELD_KEYS: readonly FieldKey[] = [
 ] as const;
 
 export const VISIBLE_TRELLO_FIELD_REGISTRY = FIELD_REGISTRY.filter((field) => VISIBLE_TRELLO_FIELD_KEYS.includes(field.key as FieldKey));
+
+export const POWER_UP_DATA_FIELD_KEYS = FIELD_REGISTRY
+  .map((field) => field.key as FieldKey)
+  .filter((key) => !VISIBLE_TRELLO_FIELD_KEYS.includes(key) || COURSE_DATE_FIELD_KEYS.includes(key));
 
 export function getFieldsBySection(section: FieldSection): FieldDefinition[] {
   return FIELD_REGISTRY.filter((field) => field.section === section);

@@ -9,7 +9,15 @@ import {
   Printer,
   RefreshCcw,
 } from 'lucide-react';
-import { FIELD_BY_KEY, TECHNICAL_FIELD_KEYS, VISIBLE_TRELLO_FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
+import {
+  FIELD_BY_KEY,
+  FIELD_REGISTRY,
+  POWER_UP_DATA_FIELD_KEYS,
+  TECHNICAL_FIELD_KEYS,
+  VISIBLE_TRELLO_FIELD_REGISTRY,
+  type FieldDefinition,
+  type FieldKey,
+} from './config/fieldRegistry';
 import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
 import {
   generateSchoolCalendarMonths,
@@ -38,7 +46,7 @@ import {
   readLabPayloadFromDescription,
   removeLabPayloadFromDescription,
   updateCardCustomFields,
-  writeLabPayloadField,
+  writeLabPayloadToDescription,
   type FieldMapping,
   type TrelloCustomField,
   type TrelloCustomFieldItem,
@@ -49,6 +57,7 @@ const AUTOSAVE_DELAY_MS = 5000;
 const VISIBLE_FIELD_SYNC_INTERVAL_MS = 10000;
 const RATE_LIMIT_RETRY_MS = 30000;
 const LOCAL_DRAFT_PREFIX = 'lab-reactor-draft:';
+const POWER_UP_PAYLOAD_KEY = 'labPayloadV2';
 const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
 const FORCE_VISIBLE_FIELD_SYNC = true;
 const TRELLO_IFRAME_OPTIONS = {
@@ -78,6 +87,7 @@ const PRIORITY_FIELD_KEYS: FieldKey[] = [
 ];
 
 type SyncStatus = 'idle' | 'loading' | 'saving' | 'synced' | 'error';
+type DurableStorage = 'custom-field' | 'plugin-data' | 'description';
 type DateTarget = { kind: 'field'; id: string; key: FieldKey } | { kind: 'course'; id: string; session: SessionNumber; index: number };
 type TabId = 'general' | 'program' | 'dates' | 'summary';
 
@@ -189,24 +199,27 @@ export default function App() {
       const nextMapping = buildFieldMapping(fields);
       const items = snapshot?.items.length ? snapshot.items : fields.length ? await getCardCustomFieldItems(nextContext.cardId).catch(() => []) : [];
       const visibleState = readVisibleCustomFieldState(fields, items);
+      const visibleStateLayer = visibleState ? projectTrelloStateToExistingFields(visibleState, fields) : null;
       const descriptionSource = snapshot?.desc !== null && snapshot?.desc !== undefined
         ? readDescriptionBackupFromText(snapshot.desc)
         : await readDescriptionBackup(nextContext.cardId).catch(() => null);
-      if (snapshot?.desc?.includes('LAB_REACTOR_PAYLOAD_START')) {
-        void removeLabPayloadFromDescription(nextContext.cardId).catch(() => undefined);
-      }
+      const powerUpSource = await readPowerUpSharedBackup(nextContext.cardId).catch(() => null);
       const payloadSource = readPayloadBackupFromItems(fields, items);
       const payloadFieldSource = payloadSource
         ? null
         : await readPayloadBackupFromField(nextContext.boardId, nextContext.cardId).catch(() => null);
-      const sources: SavedStateSource[] = [
+      const localDraftSource = readLocalDraft(nextContext.boardId, nextContext.cardId);
+      const legacySources: SavedStateSource[] = [
         descriptionSource ?? { label: 'description Trello', state: null },
         payloadSource ?? payloadFieldSource ?? { label: 'payload Trello', state: null },
-        { label: 'champs personnalisés Trello', state: visibleState },
-        readLocalDraft(nextContext.boardId, nextContext.cardId) ?? { label: 'brouillon local', state: null },
+        localDraftSource ?? { label: 'brouillon local', state: null },
       ];
-      const bestSource = chooseBestSavedState(sources);
-      const nextState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
+      const bestSource = chooseBestSavedState(legacySources);
+      const nextState = mergeLabStateLayers(
+        bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' }),
+        visibleStateLayer,
+        powerUpSource?.state ? pickStateKeys(powerUpSource.state, POWER_UP_DATA_FIELD_KEYS) : null,
+      );
 
       isApplyingRemote.current = true;
       latestState.current = nextState;
@@ -215,7 +228,7 @@ export default function App() {
       lastDurableHash.current = calculateSyncHash(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage(bestSource ? `Fiche chargée depuis ${bestSource.label}.` : 'Carte Trello synchronisée.');
+      setMessage(powerUpSource ? 'Fiche chargée depuis Trello et données Power-Up partagées.' : bestSource ? `Fiche chargée depuis ${bestSource.label}.` : 'Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -262,7 +275,7 @@ export default function App() {
       setSyncStatus('saving');
       setMessage('Sauvegarde dans Trello...');
       try {
-        await saveDurableState(context.boardId, context.cardId, stateToSave);
+        const durableStorage = await saveDurableState(context.boardId, context.cardId, stateToSave);
         lastDurableHash.current = nextHash;
 
         let activeMapping = mapping;
@@ -272,7 +285,7 @@ export default function App() {
           if (Object.keys(activeMapping).length) setMapping(activeMapping);
         }
 
-        const shouldMirrorVisibleFields = Object.keys(activeMapping).length && Date.now() - lastVisibleFieldSyncAt.current > VISIBLE_FIELD_SYNC_INTERVAL_MS;
+        const shouldMirrorVisibleFields = Object.keys(activeMapping).length > 0 && Date.now() - lastVisibleFieldSyncAt.current > VISIBLE_FIELD_SYNC_INTERVAL_MS;
         if (shouldMirrorVisibleFields) {
           const visibleState = FORCE_VISIBLE_FIELD_SYNC ? { ...stateToSave, sef_sync_hash: null } : stateToSave;
           const payload = mapLabStateToTrelloPayload(visibleState, activeMapping);
@@ -287,7 +300,7 @@ export default function App() {
         }
 
         setSyncStatus('synced');
-        setMessage(shouldMirrorVisibleFields ? 'Sauvegardé dans Lab Reactor et champs Trello.' : 'Sauvegardé dans Lab Reactor.');
+        setMessage(formatSaveMessage(durableStorage, shouldMirrorVisibleFields));
       } catch (error) {
         setSyncStatus('error');
         const errorMessage = error instanceof Error ? error.message : 'Erreur de sauvegarde.';
@@ -855,6 +868,38 @@ function scoreSavedState(savedState: LabState): number {
   }, 0);
 }
 
+function mergeLabStateLayers(base: LabState, ...layers: Array<Partial<LabState> | null | undefined>): LabState {
+  const next: Partial<LabState> = { ...base };
+  for (const layer of layers) {
+    if (!layer) continue;
+    for (const [key, value] of Object.entries(layer) as Array<[FieldKey, LabValue]>) {
+      next[key] = value;
+    }
+  }
+  return createEmptyLabState(next);
+}
+
+function projectTrelloStateToExistingFields(state: LabState, fields: TrelloCustomField[]): Partial<LabState> {
+  const keys = fields
+    .map((field) => FIELD_REGISTRY.find((definition) => definition.trelloName === field.name)?.key as FieldKey | undefined)
+    .filter((key): key is FieldKey => Boolean(key));
+  return pickStateKeys(state, keys);
+}
+
+function pickStateKeys(state: LabState, keys: readonly FieldKey[]): Partial<LabState> {
+  return Object.fromEntries(keys.map((key) => [key, state[key]])) as Partial<LabState>;
+}
+
+function formatSaveMessage(storage: DurableStorage, mirroredVisibleFields: boolean): string {
+  if (storage === 'plugin-data') {
+    return mirroredVisibleFields ? 'Sauvegardé dans Trello et données Power-Up partagées.' : 'Données Power-Up partagées sauvegardées.';
+  }
+  if (storage === 'description') {
+    return mirroredVisibleFields ? 'Sauvegardé avec backup description et champs Trello.' : 'Sauvegardé avec backup description.';
+  }
+  return mirroredVisibleFields ? 'Sauvegardé dans Lab Reactor et champs Trello.' : 'Sauvegardé dans Lab Reactor.';
+}
+
 function localDraftKey(boardId: string, cardId: string): string {
   return `${LOCAL_DRAFT_PREFIX}${boardId}:${cardId}`;
 }
@@ -963,6 +1008,13 @@ async function readPayloadBackupFromField(boardId: string, cardId: string): Prom
   return parsed ? { label: 'payload Trello', ...parsed } : null;
 }
 
+async function readPowerUpSharedBackup(cardId: string): Promise<SavedStateSource | null> {
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+  if (!t) return null;
+  const parsed = parseSavedStateSource(await t.get(cardId, 'shared', POWER_UP_PAYLOAD_KEY, null));
+  return parsed ? { label: 'données Power-Up Trello', ...parsed } : null;
+}
+
 function readVisibleCustomFieldState(fields: TrelloCustomField[], items: TrelloCustomFieldItem[]): LabState | null {
   if (!fields.length) return null;
   return mapTrelloToLabState(fields, items);
@@ -983,17 +1035,41 @@ function readDescriptionBackupFromText(value: string | null): SavedStateSource |
   return parsed ? { label: 'description Trello', ...parsed } : null;
 }
 
-async function saveDurableState(_boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
+async function saveDurableState(_boardId: string, cardId: string, stateToSave: LabState): Promise<DurableStorage> {
   const serialized = JSON.stringify({ savedAt: new Date().toISOString(), state: stateToSave });
-  const writes: Array<Promise<unknown>> = [
-    writeLabPayloadField(_boardId, cardId, serialized),
-  ];
-  const results = await Promise.allSettled(writes);
-  if (results.every((result) => result.status === 'rejected')) {
-    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
-    throw firstError instanceof Error ? firstError : new Error('Impossible de sauvegarder dans Trello.');
+
+  try {
+    await writePowerUpSharedBackup(cardId, stateToSave);
+    void removeLabPayloadFromDescription(cardId).catch(() => undefined);
+    return 'plugin-data';
+  } catch (pluginError) {
+    try {
+      await writeLabPayloadToDescription(cardId, serialized);
+      return 'description';
+    } catch (descriptionError) {
+      throw pluginError instanceof Error
+        ? pluginError
+        : descriptionError instanceof Error
+          ? descriptionError
+          : new Error('Impossible de sauvegarder dans Trello.');
+    }
   }
-  void removeLabPayloadFromDescription(cardId).catch(() => undefined);
+}
+
+async function writePowerUpSharedBackup(cardId: string, stateToSave: LabState): Promise<void> {
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+  if (!t) throw new Error('Stockage Power-Up Trello indisponible.');
+
+  const payload = {
+    savedAt: new Date().toISOString(),
+    state: pickStateKeys(stateToSave, POWER_UP_DATA_FIELD_KEYS),
+  };
+  const projectedSize = JSON.stringify({ [POWER_UP_PAYLOAD_KEY]: payload }).length;
+  if (projectedSize > 3900) {
+    throw new Error('Données Power-Up trop volumineuses pour le stockage Trello partagé.');
+  }
+
+  await t.set(cardId, 'shared', POWER_UP_PAYLOAD_KEY, payload);
 }
 
 function parseSavedState(value: unknown): LabState | null {

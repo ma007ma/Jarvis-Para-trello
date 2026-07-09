@@ -1,4 +1,5 @@
 import {
+  COURSE_DATE_FIELD_KEYS,
   FIELD_BY_TRELLO_NAME,
   FIELD_REGISTRY,
   TECHNICAL_FIELD_KEYS,
@@ -368,6 +369,7 @@ export function mapLabStateToTrelloPayload(state: LabState, mapping: Partial<Fie
   };
 
   return FIELD_REGISTRY.flatMap<TrelloFieldPayload>((definition) => {
+    if (COURSE_DATE_FIELD_KEYS.includes(definition.key as FieldKey)) return [];
     const mappingEntry = mapping[definition.key];
     if (!mappingEntry) return [];
 

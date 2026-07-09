@@ -31,7 +31,7 @@ async function getPanelUrlWithContext(t: TrelloModalContext) {
     t.board('id').catch(() => null),
     t.card ? t.card('id', 'name').catch(() => null) : Promise.resolve(null),
   ]);
-  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-ux-refactor1' });
+  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-plugin-data1' });
   if (board?.id) params.set('boardId', board.id);
   if (card?.id) params.set('cardId', card.id);
   if (card?.name) params.set('cardName', card.name);
@@ -97,7 +97,7 @@ async function createLabCard(t: TrelloModalContext) {
       },
     });
 
-    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-ux-refactor1`;
+    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-plugin-data1`;
     await t.modal({
       title: 'Lab Reactor',
       url: getSignedUrl(t, url),
@@ -113,7 +113,7 @@ async function openBoardCreatePanel(t: TrelloModalContext) {
   try {
     const board = await t.board('id');
     const boardId = board.id ?? '';
-    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-ux-refactor1`;
+    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-plugin-data1`;
     await t.modal({
       title: 'Créer fiche Lab Reactor',
       url: getSignedUrl(t, url),

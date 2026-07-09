@@ -22,6 +22,7 @@ const fields: TrelloCustomField[] = [
   },
   { id: 'f-number', name: 'Nombre de semaines', type: 'number' },
   { id: 'f-date', name: 'S1 - Début des cours', type: 'date' },
+  { id: 'f-course-dates', name: 'S1 - Dates des cours', type: 'text' },
   { id: 'f-empty', name: 'Local', type: 'text' },
   { id: 'f-hash', name: 'Hash technique', type: 'text' },
 ];
@@ -65,6 +66,17 @@ describe('customFieldsClient mappings', () => {
 
     expect(payload).toContainEqual(expect.objectContaining({ fieldKey: 'sef_program', empty: true }));
     expect(payload).toContainEqual(expect.objectContaining({ fieldKey: 'sef_s1_course_start_date', empty: true }));
+  });
+
+  it('does not write manual course dates to Trello custom fields', () => {
+    const state = createEmptyLabState({
+      sef_s1_course_dates: JSON.stringify(['2026-09-15', '2026-09-22']),
+    });
+    const mapping = buildFieldMapping(fields);
+
+    const payload = mapLabStateToTrelloPayload(state, mapping);
+
+    expect(payload.some((item) => item.fieldKey === 'sef_s1_course_dates')).toBe(false);
   });
 
   it('skips save payload when the sync hash already matches the business fields', () => {
