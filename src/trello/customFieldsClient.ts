@@ -208,17 +208,19 @@ export class TrelloCustomFieldsClient {
   }
 
   async updateCardCustomFields(cardId: string, items: TrelloFieldPayload[]): Promise<void> {
-    for (const item of items) {
-      if (item.empty) {
-        await this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, { method: 'DELETE' });
-        continue;
-      }
+    const writableItems = items.filter((item) => !item.empty);
+    if (!writableItems.length) return;
 
-      await this.request<void>(`/cards/${cardId}/customField/${item.idCustomField}/item`, {
-        method: 'PUT',
-        body: item.idValue ? { idValue: item.idValue } : { value: item.value ?? {} },
-      });
-    }
+    await this.request<void>(`/cards/${cardId}/customFields`, {
+      method: 'PUT',
+      body: {
+        customFieldItems: writableItems.map((item) => (
+          item.idValue
+            ? { idCustomField: item.idCustomField, idValue: item.idValue }
+            : { idCustomField: item.idCustomField, value: item.value ?? {} }
+        )),
+      },
+    });
   }
 
   async getOpenLists(boardId: string): Promise<TrelloList[]> {
@@ -310,7 +312,7 @@ export class TrelloCustomFieldsClient {
 
 export async function getPowerUpToken(): Promise<string | null> {
   const iframe = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
-  const restApi = iframe?.getRestApi?.();
+  const restApi = await Promise.resolve(iframe?.getRestApi?.());
   if (!restApi) {
     return null;
   }
@@ -437,7 +439,7 @@ export async function createLabCardOnBoard(boardId: string, name: string, desc: 
 
 export async function readLabPayloadFromDescription(cardId: string): Promise<string | null> {
   const card = await new TrelloCustomFieldsClient().getCard(cardId);
-  return extractDescriptionPayload(card.desc ?? '');
+  return extractLabPayloadFromDescription(card.desc ?? '');
 }
 
 export async function writeLabPayloadToDescription(cardId: string, value: string): Promise<void> {
@@ -446,7 +448,7 @@ export async function writeLabPayloadToDescription(cardId: string, value: string
   await client.updateCardDescription(cardId, upsertDescriptionPayload(card.desc ?? '', value));
 }
 
-function extractDescriptionPayload(desc: string): string | null {
+export function extractLabPayloadFromDescription(desc: string): string | null {
   const start = desc.indexOf(DESCRIPTION_PAYLOAD_START);
   if (start === -1) return null;
   const payloadStart = desc.indexOf('\n', start);

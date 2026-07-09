@@ -27,7 +27,8 @@ export interface TrelloIframe {
   board(property?: string): Promise<unknown>;
   card(property?: string): Promise<unknown>;
   closeModal(): Promise<void>;
-  getRestApi(): TrelloRestApi;
+  getContext?(): unknown;
+  getRestApi(): TrelloRestApi | Promise<TrelloRestApi>;
   get(scope: string, visibility: string, key: string, defaultValue?: unknown): Promise<unknown>;
   set(scope: string, visibility: string, key: string, value: unknown): Promise<void>;
   modal(options: Record<string, unknown>): Promise<void>;

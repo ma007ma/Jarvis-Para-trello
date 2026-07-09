@@ -29,6 +29,7 @@ import {
   calculateSyncHash,
   createLabCardOnBoard,
   ensureCustomFields,
+  extractLabPayloadFromDescription,
   getBoardCustomFields,
   getCardCustomFieldItems,
   LAB_REACTOR_PAYLOAD_FIELD_NAME,
@@ -44,7 +45,7 @@ import {
 import { buildSummary } from './utils/exporters';
 
 const AUTOSAVE_DELAY_MS = 5000;
-const VISIBLE_FIELD_SYNC_INTERVAL_MS = 120000;
+const VISIBLE_FIELD_SYNC_INTERVAL_MS = 10000;
 const RATE_LIMIT_RETRY_MS = 30000;
 const LOCAL_DRAFT_PREFIX = 'lab-reactor-draft:';
 const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
@@ -98,6 +99,12 @@ interface SavedStateSource {
   label: string;
   state: LabState | null;
   savedAt?: string | null;
+}
+
+interface PowerUpSnapshot {
+  fields: TrelloCustomField[];
+  items: TrelloCustomFieldItem[];
+  desc: string | null;
 }
 
 export default function App() {
@@ -180,13 +187,16 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
-      const descriptionPromise = readDescriptionBackup(nextContext.cardId).catch(() => null);
-      const fields = await getBoardCustomFields(nextContext.boardId).catch(() => []);
+      const snapshot = await readPowerUpSnapshot().catch(() => null);
+      const fields = snapshot?.fields.length ? snapshot.fields : await getBoardCustomFields(nextContext.boardId).catch(() => []);
       const nextMapping = buildFieldMapping(fields);
-      const items = fields.length ? await getCardCustomFieldItems(nextContext.cardId).catch(() => []) : [];
+      const items = snapshot?.items.length ? snapshot.items : fields.length ? await getCardCustomFieldItems(nextContext.cardId).catch(() => []) : [];
       const visibleState = readVisibleCustomFieldState(fields, items);
+      const descriptionSource = snapshot?.desc !== null && snapshot?.desc !== undefined
+        ? readDescriptionBackupFromText(snapshot.desc)
+        : await readDescriptionBackup(nextContext.cardId).catch(() => null);
       const sources: SavedStateSource[] = [
-        (await descriptionPromise) ?? { label: 'description Trello', state: null },
+        descriptionSource ?? { label: 'description Trello', state: null },
         readPayloadBackupFromItems(fields, items) ?? { label: 'payload Trello', state: null },
         { label: 'champs personnalisés Trello', state: visibleState },
         readLocalDraft(nextContext.boardId, nextContext.cardId) ?? { label: 'brouillon local', state: null },
@@ -864,20 +874,55 @@ async function readTrelloContext(): Promise<TrelloContext> {
 
   const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
+  const signedContext = readSignedContext(t);
   try {
     const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
     const boardData = board as { id?: string };
     const cardData = card as { id?: string; name?: string };
-    return { boardId: boardData.id ?? null, cardId: cardData.id ?? null, cardName: cardData.name ?? 'Carte Trello' };
+    return {
+      boardId: boardData.id ?? signedContext.boardId,
+      cardId: cardData.id ?? signedContext.cardId,
+      cardName: cardData.name ?? paramCardName ?? 'Carte Trello',
+    };
   } catch {
     try {
       const board = await t.board('id');
       const boardData = board as { id?: string };
-      return { boardId: boardData.id ?? null, cardId: null, cardName: 'Mode tableau' };
+      return { boardId: boardData.id ?? signedContext.boardId, cardId: signedContext.cardId, cardName: paramCardName ?? 'Mode tableau' };
     } catch {
-      return { boardId: null, cardId: null, cardName: 'Carte locale' };
+      return { boardId: signedContext.boardId, cardId: signedContext.cardId, cardName: paramCardName ?? 'Carte locale' };
     }
   }
+}
+
+function readSignedContext(t: { getContext?: () => unknown }): { boardId: string | null; cardId: string | null } {
+  try {
+    const context = t.getContext?.() as { board?: string; card?: string } | undefined;
+    return {
+      boardId: typeof context?.board === 'string' ? context.board : null,
+      cardId: typeof context?.card === 'string' ? context.card : null,
+    };
+  } catch {
+    return { boardId: null, cardId: null };
+  }
+}
+
+async function readPowerUpSnapshot(): Promise<PowerUpSnapshot | null> {
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+  if (!t) return null;
+
+  const [boardResult, cardResult] = await Promise.allSettled([
+    t.board('customFields'),
+    t.card('desc,customFieldItems'),
+  ]);
+  const board = boardResult.status === 'fulfilled' ? boardResult.value as { customFields?: TrelloCustomField[] } : {};
+  const card = cardResult.status === 'fulfilled' ? cardResult.value as { desc?: string; customFieldItems?: TrelloCustomFieldItem[] } : {};
+
+  return {
+    fields: Array.isArray(board.customFields) ? board.customFields : [],
+    items: Array.isArray(card.customFieldItems) ? card.customFieldItems : [],
+    desc: typeof card.desc === 'string' ? card.desc : null,
+  };
 }
 
 function readPayloadBackupFromItems(fields: TrelloCustomField[], items: TrelloCustomFieldItem[]): SavedStateSource | null {
@@ -897,11 +942,16 @@ function readVisibleCustomFieldState(fields: TrelloCustomField[], items: TrelloC
 async function readDescriptionBackup(cardId: string): Promise<SavedStateSource | null> {
   try {
     const value = await readLabPayloadFromDescription(cardId);
-    const parsed = parseSavedStateSource(value);
-    return parsed ? { label: 'description Trello', ...parsed } : null;
+    return readDescriptionBackupFromText(value);
   } catch {
     return null;
   }
+}
+
+function readDescriptionBackupFromText(value: string | null): SavedStateSource | null {
+  const payload = value?.includes('LAB_REACTOR_PAYLOAD_START') ? extractLabPayloadFromDescription(value) : value;
+  const parsed = parseSavedStateSource(payload);
+  return parsed ? { label: 'description Trello', ...parsed } : null;
 }
 
 async function saveDurableState(_boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
