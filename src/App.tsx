@@ -10,7 +10,7 @@ import {
   RefreshCcw,
   Zap,
 } from 'lucide-react';
-import { FIELD_BY_KEY, VISIBLE_TRELLO_FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
+import { FIELD_BY_KEY, TECHNICAL_FIELD_KEYS, VISIBLE_TRELLO_FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
 import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
 import {
   generateSchoolCalendarMonths,
@@ -165,61 +165,27 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
-      const pluginState = await readPluginDataState();
-      if (pluginState) {
-        isApplyingRemote.current = true;
-        setState(pluginState);
-        setActiveSession(getActiveSessionNumber(pluginState));
-        setSyncStatus('synced');
-        setMessage('Fiche chargée depuis la carte Trello.');
-        setDidLoad(true);
-        window.setTimeout(() => {
-          isApplyingRemote.current = false;
-        }, 0);
-        return;
-      }
-
-      const payloadState = await readPayloadBackup(nextContext.boardId, nextContext.cardId);
-      if (payloadState) {
-        isApplyingRemote.current = true;
-        setState(payloadState);
-        setActiveSession(getActiveSessionNumber(payloadState));
-        setSyncStatus('synced');
-        setMessage('Fiche chargée depuis la sauvegarde Trello.');
-        setDidLoad(true);
-        window.setTimeout(() => {
-          isApplyingRemote.current = false;
-        }, 0);
-        return;
-      }
-
-      const descriptionState = await readDescriptionBackup(nextContext.cardId);
-      if (descriptionState) {
-        isApplyingRemote.current = true;
-        setState(descriptionState);
-        setActiveSession(getActiveSessionNumber(descriptionState));
-        setSyncStatus('synced');
-        setMessage('Fiche chargée depuis la description Trello.');
-        setDidLoad(true);
-        window.setTimeout(() => {
-          isApplyingRemote.current = false;
-        }, 0);
-        return;
-      }
-
-      const ensureResult = await ensureCustomFields(nextContext.boardId);
+      const ensureResult = await ensureCustomFields(nextContext.boardId).catch(() => null);
       const fields = await getBoardCustomFields(nextContext.boardId);
-      const nextMapping = Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
+      const nextMapping = ensureResult && Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
 
       const items = await getCardCustomFieldItems(nextContext.cardId);
-      const nextState = mapTrelloToLabState(fields, items);
+      const visibleState = mapTrelloToLabState(fields, items);
+      const sources = await Promise.all([
+        readPluginDataState().then((stateFromSource) => ({ label: 'pluginData Trello', state: stateFromSource })),
+        readPayloadBackup(nextContext.boardId, nextContext.cardId).then((stateFromSource) => ({ label: 'payload Trello', state: stateFromSource })),
+        readDescriptionBackup(nextContext.cardId).then((stateFromSource) => ({ label: 'description Trello', state: stateFromSource })),
+        Promise.resolve({ label: 'champs personnalisés Trello', state: visibleState }),
+      ]);
+      const bestSource = chooseBestSavedState(sources);
+      const nextState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
 
       isApplyingRemote.current = true;
       setMapping(nextMapping);
       setState(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage(ensureResult.errors.length ? `Carte Trello synchronisée, ${ensureResult.errors.length} champ(s) à vérifier.` : 'Carte Trello synchronisée.');
+      setMessage(bestSource ? `Fiche chargée depuis ${bestSource.label}.` : 'Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -789,6 +755,27 @@ function FieldInput({ field, value, onChange }: { field: FieldDefinition; value:
       )}
     </label>
   );
+}
+
+function chooseBestSavedState(sources: Array<{ label: string; state: LabState | null }>): { label: string; state: LabState } | null {
+  const ranked = sources
+    .filter((source): source is { label: string; state: LabState } => Boolean(source.state))
+    .map((source) => ({ ...source, score: scoreSavedState(source.state) }))
+    .filter((source) => source.score > 0)
+    .sort((left, right) => right.score - left.score);
+
+  return ranked[0] ? { label: ranked[0].label, state: ranked[0].state } : null;
+}
+
+function scoreSavedState(savedState: LabState): number {
+  const technicalKeys = new Set<FieldKey>(TECHNICAL_FIELD_KEYS);
+  const visibleKeys = new Set<FieldKey>(VISIBLE_TRELLO_FIELD_REGISTRY.map((field) => field.key as FieldKey));
+  return (Object.entries(savedState) as Array<[FieldKey, LabValue]>).reduce((score, [key, value]) => {
+    if (technicalKeys.has(key) || value === null || value === '' || value === false) return score;
+    if (PRIORITY_FIELD_KEYS.includes(key)) return score + 5;
+    if (visibleKeys.has(key)) return score + 2;
+    return score + 1;
+  }, 0);
 }
 
 async function readTrelloContext(): Promise<TrelloContext> {
