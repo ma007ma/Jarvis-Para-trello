@@ -22,7 +22,7 @@
       (function () {
         var API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
         var API_BASE = 'https://api.trello.com/1';
-        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-sync2';
+        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-card-context-sync4';
         var ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
 
         function signedUrl(t, url) {
@@ -30,12 +30,29 @@
           return t && t.signUrl ? t.signUrl(target) : target;
         }
 
+        function panelUrlWithContext(t) {
+          return Promise.all([
+            t.board ? t.board('id').catch(function () { return null; }) : Promise.resolve(null),
+            t.card ? t.card('id,name').catch(function () { return null; }) : Promise.resolve(null)
+          ]).then(function (results) {
+            var board = results[0] || {};
+            var card = results[1] || {};
+            var url = './lab.html?panel=lab&v=lab-reactor-20260709-card-context-sync4';
+            if (board.id) url += '&boardId=' + encodeURIComponent(board.id);
+            if (card.id) url += '&cardId=' + encodeURIComponent(card.id);
+            if (card.name) url += '&cardName=' + encodeURIComponent(card.name);
+            return url;
+          });
+        }
+
         function openPanel(t) {
-          return t.modal({
-            title: 'Lab Reactor',
-            url: signedUrl(t),
-            height: 920,
-            fullscreen: true
+          return panelUrlWithContext(t).then(function (url) {
+            return t.modal({
+              title: 'Lab Reactor',
+              url: signedUrl(t, url),
+              height: 920,
+              fullscreen: true
+            });
           });
         }
 
@@ -159,12 +176,13 @@
               ];
             },
             'card-back-section': function (t) {
-              return {
+              return panelUrlWithContext(t).then(function (url) {
+                return {
                 title: 'Lab Reactor',
                 icon: ICON_URL,
                 content: {
                   type: 'iframe',
-                  url: signedUrl(t),
+                  url: signedUrl(t, url),
                   height: 760
                 },
                 action: {
@@ -172,6 +190,7 @@
                   callback: openPanel
                 }
               };
+              });
             }
           }, {
             appKey: API_KEY

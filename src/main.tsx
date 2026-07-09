@@ -5,12 +5,12 @@ import './styles.css';
 
 const API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
 const API_BASE = 'https://api.trello.com/1';
-const POWER_UP_URL = './lab.html?panel=lab&v=lab-reactor-20260709-sync2';
 const ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
 const isPanel = new URLSearchParams(window.location.search).get('panel') === 'lab';
 type TrelloModalContext = {
   alert?: (options: Record<string, unknown>) => Promise<void>;
   board: (fields: string) => Promise<{ id?: string }>;
+  card?: (fields: string) => Promise<{ id?: string; name?: string }>;
   getRestApi?: () => {
     getToken: () => Promise<string | null>;
     authorize: (options: Record<string, unknown>) => Promise<string | null>;
@@ -19,18 +19,27 @@ type TrelloModalContext = {
   signUrl?: (url: string) => string;
 };
 
-function getSignedPanelUrl(t: { signUrl?: (url: string) => string }) {
-  return t.signUrl ? t.signUrl(POWER_UP_URL) : POWER_UP_URL;
-}
-
 function getSignedUrl(t: { signUrl?: (url: string) => string }, url: string) {
   return t.signUrl ? t.signUrl(url) : url;
 }
 
-function openLabReactor(t: TrelloModalContext) {
+async function getPanelUrlWithContext(t: TrelloModalContext) {
+  const [board, card] = await Promise.all([
+    t.board('id').catch(() => null),
+    t.card ? t.card('id,name').catch(() => null) : Promise.resolve(null),
+  ]);
+  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-card-context-sync4' });
+  if (board?.id) params.set('boardId', board.id);
+  if (card?.id) params.set('cardId', card.id);
+  if (card?.name) params.set('cardName', card.name);
+  return `./lab.html?${params.toString()}`;
+}
+
+async function openLabReactor(t: TrelloModalContext) {
+  const url = await getPanelUrlWithContext(t);
   return t.modal({
     title: 'Lab Reactor',
-    url: getSignedPanelUrl(t),
+    url: getSignedUrl(t, url),
     height: 920,
     fullscreen: true,
   });
@@ -134,19 +143,22 @@ if (window.TrelloPowerUp && !isPanel) {
         callback: openLabReactor,
       },
     ],
-    'card-back-section': (t: { signUrl?: (url: string) => string }) => ({
-      title: 'Lab Reactor',
-      icon: ICON_URL,
-      content: {
-        type: 'iframe',
-        url: getSignedPanelUrl(t),
-        height: 760,
-      },
-      action: {
-        text: 'Ouvrir en grand',
-        callback: openLabReactor,
-      },
-    }),
+    'card-back-section': async (t: TrelloModalContext) => {
+      const url = await getPanelUrlWithContext(t);
+      return {
+        title: 'Lab Reactor',
+        icon: ICON_URL,
+        content: {
+          type: 'iframe',
+          url: getSignedUrl(t, url),
+          height: 760,
+        },
+        action: {
+          text: 'Ouvrir en grand',
+          callback: openLabReactor,
+        },
+      };
+    },
   }, {
     appKey: API_KEY,
   });

@@ -787,6 +787,9 @@ async function readTrelloContext(): Promise<TrelloContext> {
   if (paramBoardId && paramCardId) {
     return { boardId: paramBoardId, cardId: paramCardId, cardName: paramCardName ?? 'Carte Lab Reactor' };
   }
+  if (paramBoardId) {
+    return { boardId: paramBoardId, cardId: null, cardName: 'Mode tableau' };
+  }
 
   const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
