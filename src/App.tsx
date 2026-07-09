@@ -44,7 +44,6 @@ import { buildSummary } from './utils/exporters';
 const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
 const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
-const PLUGIN_DATA_KEY = 'labReactorState';
 const FORCE_VISIBLE_FIELD_SYNC = true;
 const TRELLO_IFRAME_OPTIONS = {
   appKey: import.meta.env.VITE_TRELLO_API_KEY ?? 'a9936eee9f445b63329fe1ab29b41e1f',
@@ -170,7 +169,6 @@ export default function App() {
       const nextMapping = ensureResult && Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
       const visibleState = await readVisibleCustomFieldState(fields, nextContext.cardId);
       const sources = await Promise.all([
-        readPluginDataState().then((stateFromSource) => ({ label: 'pluginData Trello', state: stateFromSource })).catch(() => ({ label: 'pluginData Trello', state: null })),
         readPayloadBackup(nextContext.boardId, nextContext.cardId).then((stateFromSource) => ({ label: 'payload Trello', state: stateFromSource })).catch(() => ({ label: 'payload Trello', state: null })),
         readDescriptionBackup(nextContext.cardId).then((stateFromSource) => ({ label: 'description Trello', state: stateFromSource })).catch(() => ({ label: 'description Trello', state: null })),
         Promise.resolve({ label: 'champs personnalisés Trello', state: visibleState }),
@@ -809,17 +807,6 @@ async function readTrelloContext(): Promise<TrelloContext> {
   }
 }
 
-async function readPluginDataState(): Promise<LabState | null> {
-  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
-  if (!t?.get) return null;
-  try {
-    const value = await t.get('card', 'shared', PLUGIN_DATA_KEY, null);
-    return parseSavedState(value);
-  } catch {
-    return null;
-  }
-}
-
 async function readPayloadBackup(boardId: string, cardId: string): Promise<LabState | null> {
   try {
     const value = await readLabPayloadField(boardId, cardId);
@@ -849,16 +836,11 @@ async function readDescriptionBackup(cardId: string): Promise<LabState | null> {
 }
 
 async function saveDurableState(boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
-  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   const serialized = JSON.stringify(stateToSave);
-  const writes: Array<Promise<unknown>> = [];
-
-  if (t?.set) {
-    writes.push(t.set('card', 'shared', PLUGIN_DATA_KEY, stateToSave));
-  }
-
-  writes.push(writeLabPayloadField(boardId, cardId, serialized));
-  writes.push(writeLabPayloadToDescription(cardId, serialized));
+  const writes: Array<Promise<unknown>> = [
+    writeLabPayloadToDescription(cardId, serialized),
+    writeLabPayloadField(boardId, cardId, serialized),
+  ];
   const results = await Promise.allSettled(writes);
   if (results.every((result) => result.status === 'rejected')) {
     const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
