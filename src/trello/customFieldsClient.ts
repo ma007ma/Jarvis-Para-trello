@@ -55,6 +55,8 @@ export interface TrelloFieldPayload {
   empty?: boolean;
 }
 
+export const LAB_REACTOR_PAYLOAD_FIELD_NAME = 'Lab Reactor payload';
+
 interface ClientOptions {
   apiKey?: string;
   apiBase?: string;
@@ -83,6 +85,40 @@ export class TrelloCustomFieldsClient {
 
   async getCardCustomFieldItems(cardId: string): Promise<TrelloCustomFieldItem[]> {
     return this.request<TrelloCustomFieldItem[]>(`/cards/${cardId}/customFieldItems`);
+  }
+
+  async ensureTextCustomField(boardId: string, name: string): Promise<TrelloCustomField> {
+    const existing = await this.getBoardCustomFields(boardId);
+    const found = existing.find((field) => field.name === name);
+    if (found) return found;
+
+    return this.request<TrelloCustomField>('/customFields', {
+      method: 'POST',
+      body: {
+        idModel: boardId,
+        modelType: 'board',
+        name,
+        type: 'text',
+        pos: 'bottom',
+        display: { cardFront: false },
+      },
+    });
+  }
+
+  async readCardTextCustomField(boardId: string, cardId: string, name: string): Promise<string | null> {
+    const [fields, items] = await Promise.all([this.getBoardCustomFields(boardId), this.getCardCustomFieldItems(cardId)]);
+    const field = fields.find((candidate) => candidate.name === name);
+    if (!field) return null;
+    const item = items.find((candidate) => candidate.idCustomField === field.id);
+    return item?.value?.text ?? null;
+  }
+
+  async writeCardTextCustomField(boardId: string, cardId: string, name: string, value: string): Promise<void> {
+    const field = await this.ensureTextCustomField(boardId, name);
+    await this.request<void>(`/cards/${cardId}/customField/${field.id}/item`, {
+      method: 'PUT',
+      body: { value: { text: value } },
+    });
   }
 
   async ensureCustomFields(boardId: string): Promise<EnsureCustomFieldsResult> {
@@ -297,6 +333,14 @@ export async function ensureCustomFields(boardId: string): Promise<EnsureCustomF
 
 export async function updateCardCustomFields(cardId: string, items: TrelloFieldPayload[]): Promise<void> {
   return new TrelloCustomFieldsClient().updateCardCustomFields(cardId, items);
+}
+
+export async function readLabPayloadField(boardId: string, cardId: string): Promise<string | null> {
+  return new TrelloCustomFieldsClient().readCardTextCustomField(boardId, cardId, LAB_REACTOR_PAYLOAD_FIELD_NAME);
+}
+
+export async function writeLabPayloadField(boardId: string, cardId: string, value: string): Promise<void> {
+  return new TrelloCustomFieldsClient().writeCardTextCustomField(boardId, cardId, LAB_REACTOR_PAYLOAD_FIELD_NAME, value);
 }
 
 function readItemValue(definition: FieldDefinition, field: TrelloCustomField, item?: TrelloCustomFieldItem): LabValue {

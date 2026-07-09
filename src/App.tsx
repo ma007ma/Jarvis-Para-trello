@@ -31,7 +31,9 @@ import {
   getCardCustomFieldItems,
   mapLabStateToTrelloPayload,
   mapTrelloToLabState,
+  readLabPayloadField,
   updateCardCustomFields,
+  writeLabPayloadField,
   type FieldMapping,
 } from './trello/customFieldsClient';
 import { buildSummary } from './utils/exporters';
@@ -39,6 +41,7 @@ import { buildSummary } from './utils/exporters';
 const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
 const REQUIRED_MAPPING_COUNT = FIELD_REGISTRY.length;
+const PLUGIN_DATA_KEY = 'labReactorState';
 const QUICK_FIELD_COLUMNS: FieldKey[][] = [
   ['sef_contact_name', 'sef_contact_phone', 'sef_contact_email', 'sef_program'],
   ['sef_start_time', 'sef_end_time', 'sef_room'],
@@ -154,16 +157,36 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
+      const pluginState = await readPluginDataState();
+      if (pluginState) {
+        isApplyingRemote.current = true;
+        setState(pluginState);
+        setActiveSession(getActiveSessionNumber(pluginState));
+        setSyncStatus('synced');
+        setMessage('Fiche chargée depuis la carte Trello.');
+        setDidLoad(true);
+        window.setTimeout(() => {
+          isApplyingRemote.current = false;
+        }, 0);
+        return;
+      }
+
+      const payloadState = await readPayloadBackup(nextContext.boardId, nextContext.cardId);
+      if (payloadState) {
+        isApplyingRemote.current = true;
+        setState(payloadState);
+        setActiveSession(getActiveSessionNumber(payloadState));
+        setSyncStatus('synced');
+        setMessage('Fiche chargée depuis la sauvegarde Trello.');
+        setDidLoad(true);
+        window.setTimeout(() => {
+          isApplyingRemote.current = false;
+        }, 0);
+        return;
+      }
+
       let fields = await getBoardCustomFields(nextContext.boardId);
       let nextMapping = buildFieldMapping(fields);
-
-      if (Object.keys(nextMapping).length < REQUIRED_MAPPING_COUNT) {
-        setMessage('Préparation des champs Trello...');
-        const ensured = await ensureCustomFields(nextContext.boardId);
-        nextMapping = ensured.mapping;
-        fields = await getBoardCustomFields(nextContext.boardId);
-        nextMapping = buildFieldMapping(fields);
-      }
 
       const items = await getCardCustomFieldItems(nextContext.cardId);
       const nextState = mapTrelloToLabState(fields, items);
@@ -199,27 +222,19 @@ export default function App() {
         return;
       }
 
-      let mappingForSave = mapping;
-      if (Object.keys(mappingForSave).length < REQUIRED_MAPPING_COUNT) {
-        setSyncStatus('loading');
-        setMessage('Préparation automatique des champs Trello...');
-        const ensured = await ensureCustomFields(context.boardId);
-        mappingForSave = ensured.mapping;
-        setMapping(mappingForSave);
-      }
-
-      const payload = mapLabStateToTrelloPayload(stateToSave, mappingForSave);
-      if (!payload.length) {
-        setSyncStatus('synced');
-        setMessage('Synchronisé.');
-        return;
-      }
-
       setSyncStatus('saving');
       setMessage('Sauvegarde dans Trello...');
       try {
-        await updateCardCustomFields(context.cardId, payload);
-        setState((current) => ({ ...current, sef_sync_hash: payload.find((item) => item.fieldKey === 'sef_sync_hash')?.value?.text ?? current.sef_sync_hash }));
+        await saveDurableState(context.boardId, context.cardId, stateToSave);
+
+        if (Object.keys(mapping).length >= REQUIRED_MAPPING_COUNT) {
+          const payload = mapLabStateToTrelloPayload(stateToSave, mapping);
+          if (payload.length) {
+            await updateCardCustomFields(context.cardId, payload).catch(() => undefined);
+            setState((current) => ({ ...current, sef_sync_hash: payload.find((item) => item.fieldKey === 'sef_sync_hash')?.value?.text ?? current.sef_sync_hash }));
+          }
+        }
+
         setSyncStatus('synced');
         setMessage('Synchronisé.');
       } catch (error) {
@@ -730,6 +745,54 @@ async function readTrelloContext(): Promise<TrelloContext> {
     } catch {
       return { boardId: null, cardId: null, cardName: 'Carte locale' };
     }
+  }
+}
+
+async function readPluginDataState(): Promise<LabState | null> {
+  const t = window.TrelloPowerUp?.iframe?.();
+  if (!t?.get) return null;
+  try {
+    const value = await t.get('card', 'shared', PLUGIN_DATA_KEY, null);
+    return parseSavedState(value);
+  } catch {
+    return null;
+  }
+}
+
+async function readPayloadBackup(boardId: string, cardId: string): Promise<LabState | null> {
+  try {
+    const value = await readLabPayloadField(boardId, cardId);
+    return parseSavedState(value);
+  } catch {
+    return null;
+  }
+}
+
+async function saveDurableState(boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
+  const t = window.TrelloPowerUp?.iframe?.();
+  const serialized = JSON.stringify(stateToSave);
+  const writes: Array<Promise<unknown>> = [];
+
+  if (t?.set) {
+    writes.push(t.set('card', 'shared', PLUGIN_DATA_KEY, stateToSave));
+  }
+
+  writes.push(writeLabPayloadField(boardId, cardId, serialized));
+  const results = await Promise.allSettled(writes);
+  if (results.every((result) => result.status === 'rejected')) {
+    const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
+    throw firstError instanceof Error ? firstError : new Error('Impossible de sauvegarder dans Trello.');
+  }
+}
+
+function parseSavedState(value: unknown): LabState | null {
+  if (!value) return null;
+  try {
+    const parsed = typeof value === 'string' ? JSON.parse(value) : value;
+    if (!parsed || typeof parsed !== 'object') return null;
+    return createEmptyLabState(parsed as Partial<LabState>);
+  } catch {
+    return null;
   }
 }
 

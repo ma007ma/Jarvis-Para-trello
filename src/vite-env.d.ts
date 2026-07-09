@@ -28,6 +28,8 @@ export interface TrelloIframe {
   card(property?: string): Promise<unknown>;
   closeModal(): Promise<void>;
   getRestApi(): TrelloRestApi;
+  get(scope: string, visibility: string, key: string, defaultValue?: unknown): Promise<unknown>;
+  set(scope: string, visibility: string, key: string, value: unknown): Promise<void>;
   modal(options: Record<string, unknown>): Promise<void>;
   render(callback: () => void): void;
   sizeTo(selector: string): Promise<void>;

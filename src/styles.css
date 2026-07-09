@@ -357,6 +357,23 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.85rem); }
   background: rgba(255, 255, 255, 0.97);
   box-shadow: 0 18px 45px rgba(83, 35, 150, 0.18);
 }
+.panel-card .section-heading button,
+.lab-actionbar button {
+  min-height: 34px;
+  padding: 0.42rem 0.62rem;
+  font-size: 0.82rem;
+}
+.lab-actionbar button { width: fit-content; }
+.lab-topbar, .panel-card, .lab-nav, .quick-summary-panel {
+  border-color: #e4d6ff;
+}
+.panel-card {
+  background:
+    linear-gradient(180deg, rgba(255, 255, 255, 0.98), rgba(253, 251, 255, 0.98));
+}
+.lab-nav button.active {
+  box-shadow: inset 3px 0 0 #7c3aed;
+}
 .lab-actionbar span { color: #6b5d80; font-size: 0.85rem; font-weight: 800; }
 .lab-actionbar strong { color: #6d28d9; }
 

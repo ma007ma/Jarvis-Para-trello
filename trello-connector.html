@@ -56,6 +56,11 @@
           var url = new URL(API_BASE + path);
           url.searchParams.set('key', API_KEY);
           if (token) url.searchParams.set('token', token);
+          if (options && options.query) {
+            Object.keys(options.query).forEach(function (key) {
+              url.searchParams.set(key, options.query[key]);
+            });
+          }
           return fetch(url.toString(), options || {}).then(function (response) {
             if (!response.ok) {
               return response.text().then(function (message) {
@@ -86,12 +91,11 @@
               if (!lists || !lists.length) throw new Error('Aucune liste ouverte trouvée sur ce tableau.');
               return trelloFetch('/cards', tokenValue, {
                 method: 'POST',
-                headers: { 'Content-Type': 'application/json' },
-                body: JSON.stringify({
+                query: {
                   idList: lists[0].id,
                   name: 'Nouvelle fiche Lab Reactor',
                   desc: 'Fiche créée depuis le Power-Up Lab Reactor.'
-                })
+                }
               });
             })
             .then(function (card) {
