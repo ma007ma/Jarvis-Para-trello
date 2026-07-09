@@ -3,29 +3,25 @@ import {
   AlertTriangle,
   CalendarDays,
   CheckCircle2,
-  Clipboard,
-  Copy,
-  Download,
-  ExternalLink,
   FlaskConical,
   MousePointerClick,
+  Plus,
+  Printer,
   RefreshCcw,
-  Save,
-  Sparkles,
-  Wand2,
   Zap,
 } from 'lucide-react';
-import { FIELD_BY_KEY, FIELD_REGISTRY, FIELD_SECTIONS, getFieldsBySection, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
-import { cleanAfterDuplication } from './domain/duplication';
+import { FIELD_BY_KEY, FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
 import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
 import {
   generateSchoolCalendarMonths,
   getActiveSessionNumber,
   getAllSavedMilestoneDates,
   getSessionMilestones,
+  readCourseDates,
   SESSION_NUMBERS,
   type MilestoneTone,
   type SessionNumber,
+  writeCourseDates,
 } from './domain/sessionPlanning';
 import { validateLabState } from './domain/validationEngine';
 import {
@@ -38,7 +34,7 @@ import {
   updateCardCustomFields,
   type FieldMapping,
 } from './trello/customFieldsClient';
-import { buildCsv, buildSummary, downloadCsv } from './utils/exporters';
+import { buildSummary } from './utils/exporters';
 
 const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
@@ -49,6 +45,7 @@ const QUICK_FIELD_COLUMNS: FieldKey[][] = [
   ['sef_school_name', 'sef_session_name', 'sef_grade_range', 'sef_day_of_week'],
 ];
 const EXTRA_QUICK_FIELDS: FieldKey[] = ['sef_school_year', 'sef_group_target', 'sef_status', 'sef_season'];
+const SESSION_DETAIL_FIELDS = ['theme', 'price'] as const;
 const PRIORITY_FIELD_KEYS: FieldKey[] = [
   'sef_school_name',
   'sef_contact_name',
@@ -65,6 +62,7 @@ const PRIORITY_FIELD_KEYS: FieldKey[] = [
 ];
 
 type SyncStatus = 'idle' | 'loading' | 'saving' | 'synced' | 'error';
+type DateTarget = { kind: 'field'; id: string; key: FieldKey } | { kind: 'course'; id: string; session: SessionNumber; index: number };
 
 interface TrelloContext {
   boardId: string | null;
@@ -80,7 +78,8 @@ export default function App() {
   const [message, setMessage] = useState('Mode local prêt.');
   const [didLoad, setDidLoad] = useState(false);
   const [activeSession, setActiveSession] = useState<SessionNumber>(1);
-  const [selectedMilestoneKey, setSelectedMilestoneKey] = useState<FieldKey | null>(null);
+  const [selectedDateTarget, setSelectedDateTarget] = useState<DateTarget | null>(null);
+  const [courseSlots, setCourseSlots] = useState<Record<SessionNumber, number>>({ 1: 4, 2: 4, 3: 4, 4: 4 });
   const saveTimer = useRef<number | null>(null);
   const isApplyingRemote = useRef(false);
 
@@ -88,10 +87,19 @@ export default function App() {
   const calendarMonths = useMemo(() => generateSchoolCalendarMonths(state.sef_school_year), [state.sef_school_year]);
   const milestoneDates = useMemo(() => getAllSavedMilestoneDates(state), [state]);
   const activeMilestones = useMemo(() => getSessionMilestones(state, activeSession), [activeSession, state]);
-  const selectedMilestone = useMemo(
-    () => activeMilestones.find((milestone) => milestone.fieldKey === selectedMilestoneKey && milestone.fieldKey) ?? activeMilestones.find((milestone) => milestone.fieldKey),
-    [activeMilestones, selectedMilestoneKey],
+  const activeCourseDates = useMemo(() => readCourseDates(state, activeSession), [activeSession, state]);
+  const visibleCourseCount = Math.min(12, Math.max(4, courseSlots[activeSession], activeCourseDates.length));
+  const visibleMilestones = useMemo(
+    () => activeMilestones.filter((milestone) => !milestone.courseIndex || milestone.courseIndex <= visibleCourseCount),
+    [activeMilestones, visibleCourseCount],
   );
+  const selectedMilestone = useMemo(() => {
+    if (selectedDateTarget) {
+      const match = visibleMilestones.find((milestone) => milestone.id === selectedDateTarget.id);
+      if (match) return match;
+    }
+    return visibleMilestones.find((milestone) => milestone.fieldKey) ?? visibleMilestones.find((milestone) => milestone.courseIndex);
+  }, [selectedDateTarget, visibleMilestones]);
   const priorityCompletion = useMemo(() => {
     const filled = PRIORITY_FIELD_KEYS.filter((key) => {
       const value = state[key];
@@ -147,18 +155,28 @@ export default function App() {
   }, []);
 
   useEffect(() => {
-    if (selectedMilestoneKey && activeMilestones.some((milestone) => milestone.fieldKey === selectedMilestoneKey)) return;
-    setSelectedMilestoneKey(activeMilestones.find((milestone) => milestone.fieldKey)?.fieldKey ?? null);
-  }, [activeMilestones, selectedMilestoneKey]);
+    if (selectedDateTarget && visibleMilestones.some((milestone) => milestone.id === selectedDateTarget.id)) return;
+    const next = visibleMilestones.find((milestone) => milestone.fieldKey) ?? visibleMilestones.find((milestone) => milestone.courseIndex);
+    setSelectedDateTarget(toDateTarget(next, activeSession));
+  }, [activeSession, selectedDateTarget, visibleMilestones]);
 
   const saveNow = useCallback(
     async (stateToSave = state) => {
-      if (!context.cardId || !Object.keys(mapping).length) {
-        setMessage('Impossible de sauvegarder: contexte Trello ou champs manquants.');
+      if (!context.cardId || !context.boardId) {
+        setMessage('Ouvrez depuis une carte Trello pour activer la synchro automatique.');
         return;
       }
 
-      const payload = mapLabStateToTrelloPayload(stateToSave, mapping);
+      let mappingForSave = mapping;
+      if (Object.keys(mappingForSave).length < REQUIRED_MAPPING_COUNT) {
+        setSyncStatus('loading');
+        setMessage('Préparation automatique des champs Trello...');
+        const ensured = await ensureCustomFields(context.boardId);
+        mappingForSave = ensured.mapping;
+        setMapping(mappingForSave);
+      }
+
+      const payload = mapLabStateToTrelloPayload(stateToSave, mappingForSave);
       if (!payload.length) {
         setSyncStatus('synced');
         setMessage('Synchronisé.');
@@ -177,7 +195,7 @@ export default function App() {
         setMessage(error instanceof Error ? error.message : 'Erreur de sauvegarde.');
       }
     },
-    [context.cardId, mapping, state],
+    [context.boardId, context.cardId, mapping, state],
   );
 
   useEffect(() => {
@@ -229,59 +247,23 @@ export default function App() {
     if (key === 'sef_session_name') {
       if (value === 'Session 2') setActiveSession(2);
       else if (value === 'Session 3') setActiveSession(3);
+      else if (value === 'Session 4') setActiveSession(4);
       else setActiveSession(1);
     }
   };
 
   const updateSelectedMilestoneDate = (date: string) => {
-    if (!selectedMilestone?.fieldKey) return;
-    updateField(selectedMilestone.fieldKey, date);
-    setMessage(`${selectedMilestone.label}: ${date}.`);
-  };
-
-  const initializeFields = async () => {
-    if (!context.boardId) {
-      setMessage("Ouvrez le Power-Up depuis une carte Trello avant d'initialiser les champs.");
-      setSyncStatus('error');
-      return;
+    const target = selectedDateTarget ?? toDateTarget(selectedMilestone, activeSession);
+    if (!target) return;
+    if (target.kind === 'field') {
+      updateField(target.key, date);
+    } else {
+      const dates = [...readCourseDates(state, target.session)];
+      dates[target.index - 1] = date;
+      updateField(`sef_s${target.session}_course_dates` as FieldKey, writeCourseDates(dates));
+      setCourseSlots((current) => ({ ...current, [target.session]: Math.max(current[target.session], target.index) }));
     }
-
-    setSyncStatus('loading');
-    setMessage('Initialisation des champs SEF...');
-    try {
-      const result = await ensureCustomFields(context.boardId);
-      setMapping(result.mapping);
-      setSyncStatus(result.errors.length ? 'error' : 'synced');
-      setMessage(`Champs créés: ${result.created.length}. Déjà présents: ${result.present.length}. Options créées: ${result.optionsCreated.length}.`);
-      await loadFromTrello();
-    } catch (error) {
-      setSyncStatus('error');
-      setMessage(error instanceof Error ? error.message : "Erreur pendant l'initialisation.");
-    }
-  };
-
-  const copySummary = async () => {
-    await navigator.clipboard.writeText(buildSummary(state));
-    setMessage('Résumé copié.');
-  };
-
-  const copyCsv = async () => {
-    await navigator.clipboard.writeText(buildCsv(state));
-    setMessage('CSV copié.');
-  };
-
-  const onCleanAfterDuplication = () => {
-    const clearDates = window.confirm('Vider les dates de jalons sur cette carte dupliquée? Annuler les conservera.');
-    setState((current) => cleanAfterDuplication(current, { clearDates }));
-    setMessage(clearDates ? 'Carte nettoyée, dates vidées.' : 'Carte nettoyée, dates conservées.');
-  };
-
-  const openCalculatorWidget = () => {
-    if (typeof state.sef_pricing_widget_url === 'string' && state.sef_pricing_widget_url.trim()) {
-      window.open(state.sef_pricing_widget_url, '_blank', 'noopener,noreferrer');
-      return;
-    }
-    setMessage('Aucune URL de widget calculatrice configurée.');
+    setMessage(`${selectedMilestone?.label ?? 'Date'}: ${date}.`);
   };
 
   return (
@@ -317,7 +299,13 @@ export default function App() {
           ))}
         </div>
         <div className="quick-extra">
-          {EXTRA_QUICK_FIELDS.map((key) => <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />)}
+          {EXTRA_QUICK_FIELDS.map((key) =>
+            key === 'sef_school_year' ? (
+              <YearSelect key={key} value={state[key]} onChange={(value) => updateField(key, value)} />
+            ) : (
+              <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />
+            ),
+          )}
         </div>
       </section>
 
@@ -343,14 +331,19 @@ export default function App() {
               <strong>{selectedMilestone?.label ?? 'Aucune étape'}</strong>
             </div>
           </div>
+          <div className="session-detail-grid">
+            {SESSION_DETAIL_FIELDS.map((suffix) => {
+              const key = `sef_s${activeSession}_${suffix}` as FieldKey;
+              return <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />;
+            })}
+          </div>
           <div className="milestone-list">
-            {activeMilestones.map((milestone) => (
+            {visibleMilestones.map((milestone) => (
               <button
                 key={milestone.id}
                 type="button"
-                className={`milestone-row ${milestone.tone} ${selectedMilestone?.fieldKey === milestone.fieldKey ? 'selected' : ''}`}
-                disabled={!milestone.fieldKey}
-                onClick={() => milestone.fieldKey && setSelectedMilestoneKey(milestone.fieldKey)}
+                className={`milestone-row ${milestone.tone} ${selectedMilestone?.id === milestone.id ? 'selected' : ''}`}
+                onClick={() => setSelectedDateTarget(toDateTarget(milestone, activeSession))}
               >
                 <span className="milestone-tone" />
                 <strong>{milestone.label}</strong>
@@ -358,6 +351,15 @@ export default function App() {
                 <em>{milestone.status}</em>
               </button>
             ))}
+            {visibleCourseCount < 12 && (
+              <button
+                type="button"
+                className="add-course-button"
+                onClick={() => setCourseSlots((current) => ({ ...current, [activeSession]: Math.min(12, current[activeSession] + 1) }))}
+              >
+                <Plus size={17} />Ajouter cours
+              </button>
+            )}
           </div>
         </div>
         <div className="calendar-section">
@@ -408,7 +410,7 @@ export default function App() {
           <div className="section-heading">
             <div>
               <p className="eyebrow">Trello</p>
-              <h2>Synchro</h2>
+              <h2>Synchro automatique</h2>
             </div>
           </div>
           <p className="status-message"><strong>{message}</strong><span>{hasTrelloContext ? 'Connecté à Trello' : 'Mode local'}</span></p>
@@ -417,31 +419,16 @@ export default function App() {
             <span className={context.boardId ? 'ok' : ''}><CheckCircle2 size={15} />Board</span>
             <span className={Object.keys(mapping).length >= REQUIRED_MAPPING_COUNT ? 'ok' : ''}><CheckCircle2 size={15} />Champs SEF</span>
           </div>
-          <div className="actions-grid">
-            <button type="button" onClick={loadFromTrello}><RefreshCcw size={18} />Synchroniser depuis Trello</button>
-            <button type="button" onClick={() => void saveNow()}><Save size={18} />Sauvegarder maintenant</button>
-            <button type="button" onClick={initializeFields}><Wand2 size={18} />Initialiser / vérifier les champs SEF</button>
-            <button type="button" onClick={copySummary}><Clipboard size={18} />Copier résumé</button>
-            <button type="button" onClick={copyCsv}><Copy size={18} />Copier CSV</button>
-            <button type="button" onClick={() => downloadCsv(buildCsv(state), `${state.sef_school_name || 'lab-reactor'}.csv`)}><Download size={18} />Télécharger CSV</button>
-            <button type="button" onClick={onCleanAfterDuplication}><Sparkles size={18} />Nettoyer après duplication</button>
-            <button type="button" onClick={openCalculatorWidget}><ExternalLink size={18} />Ouvrir widget calculatrice</button>
-          </div>
+          <p className="auto-sync-note"><RefreshCcw size={16} />Chaque changement est sauvegardé dans Trello. Les changements faits dans Trello sont relus automatiquement.</p>
         </section>
       </section>
 
       <section className="summary-panel">
-        <div className="section-heading"><h2>Résumé exportable</h2></div>
-        <pre>{buildSummary(state)}</pre>
-      </section>
-
-      <section className="form-workbench">
         <div className="section-heading">
-          <div><p className="eyebrow">Annexe</p><h2>Tous les champs Trello</h2></div>
+          <h2>Résumé exportable</h2>
+          <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
         </div>
-        {FIELD_SECTIONS.filter((section) => section !== 'Validation / technique').map((section) => (
-          <FieldSectionView key={section} title={section} fields={getFieldsBySection(section)} state={state} onChange={updateField} />
-        ))}
+        <pre>{buildSummary(state)}</pre>
       </section>
     </main>
   );
@@ -513,6 +500,19 @@ function FieldSectionView({ title, fields, state, onChange }: { title: string; f
   );
 }
 
+function YearSelect({ value, onChange }: { value: LabValue; onChange: (value: LabValue) => void }) {
+  const currentYear = new Date().getFullYear();
+  const years = Array.from({ length: 7 }, (_, index) => currentYear - 2 + index);
+  return (
+    <label className="field" htmlFor="field-sef_school_year">
+      <span>Année civile</span>
+      <select id="field-sef_school_year" value={String(value ?? currentYear)} onChange={(event) => onChange(event.target.value)}>
+        {years.map((year) => <option key={year} value={year}>{year}</option>)}
+      </select>
+    </label>
+  );
+}
+
 function FieldInput({ field, value, onChange }: { field: FieldDefinition; value: LabValue; onChange: (value: LabValue) => void }) {
   const id = `field-${field.key}`;
   return (
@@ -536,14 +536,19 @@ function FieldInput({ field, value, onChange }: { field: FieldDefinition; value:
 }
 
 async function readTrelloContext(): Promise<TrelloContext> {
-  const isPanel = new URLSearchParams(window.location.search).get('panel') === 'lab';
-  if (!isPanel) return { boardId: null, cardId: null, cardName: 'Carte locale' };
   const t = window.TrelloPowerUp?.iframe?.();
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
   const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
   const boardData = board as { id?: string };
   const cardData = card as { id?: string; name?: string };
   return { boardId: boardData.id ?? null, cardId: cardData.id ?? null, cardName: cardData.name ?? 'Carte Trello' };
+}
+
+function toDateTarget(milestone: { id: string; fieldKey?: FieldKey; courseIndex?: number } | undefined, session: SessionNumber): DateTarget | null {
+  if (!milestone) return null;
+  if (milestone.fieldKey) return { kind: 'field', id: milestone.id, key: milestone.fieldKey };
+  if (milestone.courseIndex) return { kind: 'course', id: milestone.id, session, index: milestone.courseIndex };
+  return null;
 }
 
 function labelForSync(status: SyncStatus): string {

@@ -1,7 +1,7 @@
 ﻿import type { FieldKey } from '../config/fieldRegistry';
 import type { LabState } from './labState';
 
-export type SessionNumber = 1 | 2 | 3;
+export type SessionNumber = 1 | 2 | 3 | 4;
 export type MilestoneStatus = 'manquant' | 'à venir' | "aujourd'hui" | 'passé' | 'problème';
 export type MilestoneTone = 'purple' | 'red' | 'blue' | 'yellow' | 'gray' | 'green' | 'orange';
 
@@ -25,7 +25,7 @@ export interface SchoolCalendarMonth {
   weeks: Array<Array<number | null>>;
 }
 
-export const SESSION_NUMBERS: readonly SessionNumber[] = [1, 2, 3];
+export const SESSION_NUMBERS: readonly SessionNumber[] = [1, 2, 3, 4];
 
 const BASE_MILESTONE_DEFINITIONS: Array<Omit<SessionMilestoneDefinition, 'fieldKey'>> = [
   { id: 'coupon_delivery', label: 'Livraison des coupons', tone: 'purple' },
@@ -56,6 +56,7 @@ const FIELD_BY_MILESTONE_ID: Record<string, string> = {
 export function getActiveSessionNumber(state: LabState): SessionNumber {
   if (state.sef_session_name === 'Session 2') return 2;
   if (state.sef_session_name === 'Session 3') return 3;
+  if (state.sef_session_name === 'Session 4') return 4;
   return 1;
 }
 
@@ -65,7 +66,7 @@ export function getSessionMilestoneDefinitions(session: SessionNumber): SessionM
     fieldKey: `sef_s${session}_${FIELD_BY_MILESTONE_ID[definition.id]}` as FieldKey,
   }));
 
-  const courseMilestones: SessionMilestoneDefinition[] = Array.from({ length: 8 }, (_, index) => ({
+  const courseMilestones: SessionMilestoneDefinition[] = Array.from({ length: 12 }, (_, index) => ({
     id: `course_${index + 1}`,
     label: `Cours ${index + 1}`,
     tone: 'green',
@@ -78,11 +79,10 @@ export function getSessionMilestoneDefinitions(session: SessionNumber): SessionM
 
 export function getSessionMilestones(state: LabState, session: SessionNumber, now = new Date()): SessionMilestone[] {
   const today = toDateOnly(now);
-  const startKey = `sef_s${session}_course_start_date` as FieldKey;
-  const courseStart = typeof state[startKey] === 'string' ? state[startKey] : null;
+  const courseDates = readCourseDates(state, session);
 
   return getSessionMilestoneDefinitions(session).map((definition) => {
-    const date = definition.fieldKey ? readDate(state, definition.fieldKey) : getDerivedCourseDate(courseStart, definition.courseIndex);
+    const date = definition.fieldKey ? readDate(state, definition.fieldKey) : courseDates[(definition.courseIndex ?? 1) - 1] ?? null;
     return {
       ...definition,
       date,
@@ -94,18 +94,14 @@ export function getSessionMilestones(state: LabState, session: SessionNumber, no
 export function getAllSavedMilestoneDates(state: LabState): Array<{ date: string; tone: MilestoneTone; label: string }> {
   return SESSION_NUMBERS.flatMap((session) =>
     getSessionMilestones(state, session)
-      .filter((milestone) => milestone.fieldKey && milestone.date)
+      .filter((milestone) => milestone.date)
       .map((milestone) => ({ date: milestone.date as string, tone: milestone.tone, label: `S${session} - ${milestone.label}` })),
   );
 }
 
 export function generateSchoolCalendarMonths(schoolYear: string | null | number | boolean): SchoolCalendarMonth[] {
-  const startYear = parseSchoolYearStart(schoolYear) ?? new Date().getFullYear();
-  return Array.from({ length: 14 }, (_, index) => {
-    const monthIndex = (6 + index) % 12;
-    const year = startYear + Math.floor((6 + index) / 12);
-    return buildMonth(year, monthIndex);
-  });
+  const year = parseSchoolYearStart(schoolYear) ?? new Date().getFullYear();
+  return Array.from({ length: 12 }, (_, monthIndex) => buildMonth(year, monthIndex));
 }
 
 export function parseSchoolYearStart(schoolYear: string | null | number | boolean): number | null {
@@ -119,12 +115,29 @@ function readDate(state: LabState, key: FieldKey): string | null {
   return typeof value === 'string' && value ? value : null;
 }
 
-function getDerivedCourseDate(courseStart: string | null, courseIndex?: number): string | null {
-  if (!courseStart || !courseIndex) return null;
-  const date = new Date(`${courseStart}T12:00:00.000Z`);
-  if (Number.isNaN(date.getTime())) return null;
-  date.setUTCDate(date.getUTCDate() + (courseIndex - 1) * 7);
-  return date.toISOString().slice(0, 10);
+export function readCourseDates(state: LabState, session: SessionNumber): string[] {
+  const value = state[`sef_s${session}_course_dates` as FieldKey];
+  if (typeof value !== 'string' || !value.trim()) return [];
+  if (value.trim().startsWith('[')) {
+    try {
+      const parsed = JSON.parse(value) as unknown;
+      if (Array.isArray(parsed)) {
+        return parsed.map((date) => (typeof date === 'string' && /^\d{4}-\d{2}-\d{2}$/.test(date) ? date : ''));
+      }
+    } catch {
+      return [];
+    }
+  }
+  return value
+    .split(',')
+    .map((date) => date.trim())
+    .filter((date) => /^\d{4}-\d{2}-\d{2}$/.test(date));
+}
+
+export function writeCourseDates(dates: string[]): string | null {
+  const cleaned = dates.map((date) => (date.trim().match(/^\d{4}-\d{2}-\d{2}$/) ? date.trim() : ''));
+  while (cleaned.length > 0 && !cleaned[cleaned.length - 1]) cleaned.pop();
+  return cleaned.length ? JSON.stringify(cleaned) : null;
 }
 
 function getMilestoneStatus(date: string | null, today: string): MilestoneStatus {

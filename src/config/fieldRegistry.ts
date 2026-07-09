@@ -5,6 +5,7 @@
   'Jalons session 1',
   'Jalons session 2',
   'Jalons session 3',
+  'Jalons session 4',
   'Validation / technique',
 ] as const;
 
@@ -20,7 +21,7 @@ export interface FieldDefinition {
   options?: readonly string[];
 }
 
-const SESSION_OPTIONS = ['Session 1', 'Session 2', 'Session 3'] as const;
+const SESSION_OPTIONS = ['Session 1', 'Session 2', 'Session 3', 'Session 4'] as const;
 const SEASON_OPTIONS = ['Automne', 'Hiver', 'Printemps', 'Été'] as const;
 const STATUS_OPTIONS = ['Brouillon', 'À valider', 'Prêt à présenter', 'Envoyé', 'Confirmé', 'Inscriptions ouvertes', 'En cours', 'Terminé', 'Annulé'] as const;
 const PROGRAM_OPTIONS = ['NASA', 'Brixo', 'Robotique', 'Atomes crochus', 'Sciences dans tous les sens', 'Laboratoire en folie', 'Ingénieur Junior', 'Autre'] as const;
@@ -30,7 +31,7 @@ const WEEKDAY_OPTIONS = ['Lundi', 'Mardi', 'Mercredi', 'Jeudi', 'Vendredi'] as c
 export const FIELD_REGISTRY = [
   { key: 'sef_school_name', trelloName: 'École', type: 'text', description: "Nom de l'école.", section: 'Identité' },
   { key: 'sef_css', trelloName: 'Centre de services scolaire', type: 'text', description: 'Centre de services scolaire.', section: 'Identité' },
-  { key: 'sef_school_year', trelloName: 'Année scolaire', type: 'text', description: 'Année scolaire, par exemple 2026-2027.', section: 'Identité' },
+  { key: 'sef_school_year', trelloName: 'Année civile', type: 'text', description: 'Année civile, par exemple 2026.', section: 'Identité' },
   { key: 'sef_address', trelloName: 'Adresse', type: 'text', description: "Adresse de l'école.", section: 'Identité' },
   { key: 'sef_city', trelloName: 'Ville', type: 'text', description: "Ville de l'école.", section: 'Identité' },
   { key: 'sef_postal_code', trelloName: 'Code postal', type: 'text', description: 'Code postal.', section: 'Identité' },
@@ -49,6 +50,14 @@ export const FIELD_REGISTRY = [
   { key: 'sef_end_time', trelloName: 'Heure fin', type: 'text', description: 'Heure de fin.', section: 'Session / programme' },
   { key: 'sef_room', trelloName: 'Local', type: 'text', description: 'Local ou salle.', section: 'Session / programme' },
   { key: 'sef_weeks', trelloName: 'Nombre de semaines', type: 'number', description: 'Nombre de semaines de cours.', section: 'Session / programme' },
+  { key: 'sef_s1_theme', trelloName: 'S1 - Thème', type: 'text', description: 'Session 1 - Thème vendu.', section: 'Session / programme' },
+  { key: 'sef_s1_price', trelloName: 'S1 - Prix', type: 'number', description: 'Session 1 - Prix vendu.', section: 'Session / programme' },
+  { key: 'sef_s2_theme', trelloName: 'S2 - Thème', type: 'text', description: 'Session 2 - Thème vendu.', section: 'Session / programme' },
+  { key: 'sef_s2_price', trelloName: 'S2 - Prix', type: 'number', description: 'Session 2 - Prix vendu.', section: 'Session / programme' },
+  { key: 'sef_s3_theme', trelloName: 'S3 - Thème', type: 'text', description: 'Session 3 - Thème vendu.', section: 'Session / programme' },
+  { key: 'sef_s3_price', trelloName: 'S3 - Prix', type: 'number', description: 'Session 3 - Prix vendu.', section: 'Session / programme' },
+  { key: 'sef_s4_theme', trelloName: 'S4 - Thème', type: 'text', description: 'Session 4 - Thème vendu.', section: 'Session / programme' },
+  { key: 'sef_s4_price', trelloName: 'S4 - Prix', type: 'number', description: 'Session 4 - Prix vendu.', section: 'Session / programme' },
 
   { key: 'sef_duplicate_source', trelloName: 'Carte source copiée', type: 'text', description: "Référence de la carte d'origine.", section: 'Duplication' },
   { key: 'sef_internal_notes', trelloName: 'Notes internes', type: 'text', description: "Notes internes de l'équipe.", section: 'Duplication' },
@@ -63,6 +72,7 @@ export const FIELD_REGISTRY = [
   { key: 'sef_s1_class_list_prep_date', trelloName: 'S1 - Préparation listes', type: 'date', description: 'Session 1 - Préparation et envoi des listes.', section: 'Jalons session 1' },
   { key: 'sef_s1_course_start_date', trelloName: 'S1 - Début des cours', type: 'date', description: 'Session 1 - Début des cours.', section: 'Jalons session 1' },
   { key: 'sef_s1_course_end_date', trelloName: 'S1 - Fin des cours', type: 'date', description: 'Session 1 - Fin des cours.', section: 'Jalons session 1' },
+  { key: 'sef_s1_course_dates', trelloName: 'S1 - Dates des cours', type: 'text', description: 'Session 1 - Dates manuelles des cours, séparées par virgules.', section: 'Jalons session 1' },
 
   { key: 'sef_s2_coupon_delivery_date', trelloName: 'S2 - Livraison coupons', type: 'date', description: 'Session 2 - Livraison des coupons.', section: 'Jalons session 2' },
   { key: 'sef_s2_coupon_distribution_date', trelloName: 'S2 - Distribution coupons', type: 'date', description: 'Session 2 - Distribution des coupons.', section: 'Jalons session 2' },
@@ -74,6 +84,7 @@ export const FIELD_REGISTRY = [
   { key: 'sef_s2_class_list_prep_date', trelloName: 'S2 - Préparation listes', type: 'date', description: 'Session 2 - Préparation et envoi des listes.', section: 'Jalons session 2' },
   { key: 'sef_s2_course_start_date', trelloName: 'S2 - Début des cours', type: 'date', description: 'Session 2 - Début des cours.', section: 'Jalons session 2' },
   { key: 'sef_s2_course_end_date', trelloName: 'S2 - Fin des cours', type: 'date', description: 'Session 2 - Fin des cours.', section: 'Jalons session 2' },
+  { key: 'sef_s2_course_dates', trelloName: 'S2 - Dates des cours', type: 'text', description: 'Session 2 - Dates manuelles des cours, séparées par virgules.', section: 'Jalons session 2' },
 
   { key: 'sef_s3_coupon_delivery_date', trelloName: 'S3 - Livraison coupons', type: 'date', description: 'Session 3 - Livraison des coupons.', section: 'Jalons session 3' },
   { key: 'sef_s3_coupon_distribution_date', trelloName: 'S3 - Distribution coupons', type: 'date', description: 'Session 3 - Distribution des coupons.', section: 'Jalons session 3' },
@@ -85,6 +96,19 @@ export const FIELD_REGISTRY = [
   { key: 'sef_s3_class_list_prep_date', trelloName: 'S3 - Préparation listes', type: 'date', description: 'Session 3 - Préparation et envoi des listes.', section: 'Jalons session 3' },
   { key: 'sef_s3_course_start_date', trelloName: 'S3 - Début des cours', type: 'date', description: 'Session 3 - Début des cours.', section: 'Jalons session 3' },
   { key: 'sef_s3_course_end_date', trelloName: 'S3 - Fin des cours', type: 'date', description: 'Session 3 - Fin des cours.', section: 'Jalons session 3' },
+  { key: 'sef_s3_course_dates', trelloName: 'S3 - Dates des cours', type: 'text', description: 'Session 3 - Dates manuelles des cours, séparées par virgules.', section: 'Jalons session 3' },
+
+  { key: 'sef_s4_coupon_delivery_date', trelloName: 'S4 - Livraison coupons', type: 'date', description: 'Session 4 - Livraison des coupons.', section: 'Jalons session 4' },
+  { key: 'sef_s4_coupon_distribution_date', trelloName: 'S4 - Distribution coupons', type: 'date', description: 'Session 4 - Distribution des coupons.', section: 'Jalons session 4' },
+  { key: 'sef_s4_registration_start_date', trelloName: 'S4 - Début inscriptions', type: 'date', description: 'Session 4 - Début des inscriptions.', section: 'Jalons session 4' },
+  { key: 'sef_s4_spectacle_date', trelloName: 'S4 - Spectacle / tournée', type: 'date', description: 'Session 4 - Spectacle ou tournée de classe.', section: 'Jalons session 4' },
+  { key: 'sef_s4_parent_email_1_date', trelloName: 'S4 - 1er courriel parents', type: 'date', description: 'Session 4 - Premier courriel aux parents.', section: 'Jalons session 4' },
+  { key: 'sef_s4_parent_email_2_date', trelloName: 'S4 - 2e courriel parents', type: 'date', description: 'Session 4 - Deuxième courriel aux parents.', section: 'Jalons session 4' },
+  { key: 'sef_s4_registration_end_date', trelloName: 'S4 - Fin inscriptions', type: 'date', description: 'Session 4 - Fin des inscriptions.', section: 'Jalons session 4' },
+  { key: 'sef_s4_class_list_prep_date', trelloName: 'S4 - Préparation listes', type: 'date', description: 'Session 4 - Préparation et envoi des listes.', section: 'Jalons session 4' },
+  { key: 'sef_s4_course_start_date', trelloName: 'S4 - Début des cours', type: 'date', description: 'Session 4 - Début des cours.', section: 'Jalons session 4' },
+  { key: 'sef_s4_course_end_date', trelloName: 'S4 - Fin des cours', type: 'date', description: 'Session 4 - Fin des cours.', section: 'Jalons session 4' },
+  { key: 'sef_s4_course_dates', trelloName: 'S4 - Dates des cours', type: 'text', description: 'Session 4 - Dates manuelles des cours, séparées par virgules.', section: 'Jalons session 4' },
 
   { key: 'sef_validation_score', trelloName: 'Score validation', type: 'number', description: 'Score de validation opérationnelle.', section: 'Validation / technique' },
   { key: 'sef_validation_status', trelloName: 'Statut validation', type: 'list', options: ['Incomplet', 'Attention', 'Prêt à présenter'], description: 'Statut de validation.', section: 'Validation / technique' },
