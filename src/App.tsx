@@ -185,6 +185,9 @@ export default function App() {
       setSyncStatus('synced');
       setMessage(bestSource ? `Fiche chargée depuis ${bestSource.label}.` : 'Carte Trello synchronisée.');
       setDidLoad(true);
+      if (bestSource && bestSource.label === 'champs personnalisés Trello') {
+        void saveDurableState(nextContext.boardId, nextContext.cardId, nextState).catch(() => undefined);
+      }
       window.setTimeout(() => {
         isApplyingRemote.current = false;
       }, 0);

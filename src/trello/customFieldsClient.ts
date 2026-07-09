@@ -240,7 +240,7 @@ export class TrelloCustomFieldsClient {
   async updateCardDescription(cardId: string, desc: string): Promise<void> {
     await this.request<void>(`/cards/${cardId}`, {
       method: 'PUT',
-      body: { desc },
+      body: new URLSearchParams({ desc }),
     });
   }
 
@@ -258,10 +258,11 @@ export class TrelloCustomFieldsClient {
     }
     Object.entries(options.query ?? {}).forEach(([key, value]) => url.searchParams.set(key, value));
 
+    const isFormBody = options.body instanceof URLSearchParams;
     const response = await this.fetcher(url.toString(), {
       method: options.method ?? 'GET',
-      headers: options.body ? { 'Content-Type': 'application/json' } : undefined,
-      body: options.body ? JSON.stringify(options.body) : undefined,
+      headers: options.body ? { 'Content-Type': isFormBody ? 'application/x-www-form-urlencoded;charset=UTF-8' : 'application/json' } : undefined,
+      body: options.body ? (isFormBody ? options.body.toString() : JSON.stringify(options.body)) : undefined,
     });
 
     if (!response.ok) {
