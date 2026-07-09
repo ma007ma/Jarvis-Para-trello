@@ -399,3 +399,272 @@ h1 { font-size: clamp(1.7rem, 5vw, 2.85rem); }
   .lab-layout { display: block; margin: 0; }
   .panel-card { box-shadow: none; border: 1px solid #cbd5e1; padding: 0.12in; }
 }
+
+.lab-shell {
+  padding: 0.75rem 0.75rem 4.2rem;
+  background:
+    linear-gradient(180deg, #fbfaff 0%, #f7f9fc 45%, #f2f6fa 100%);
+  color: #151225;
+}
+.lab-topbar {
+  border-color: #ded4ff;
+  box-shadow: 0 12px 34px rgba(45, 37, 89, 0.08);
+}
+.lab-layout {
+  grid-template-columns: 190px minmax(0, 1fr) 230px;
+  gap: 0.8rem;
+}
+.lab-nav, .quick-summary-panel, .panel-card, .planning-sidebar, .calendar-section {
+  border-color: #e0d8f8;
+  box-shadow: 0 10px 28px rgba(42, 35, 92, 0.07);
+}
+.lab-nav button {
+  min-height: 38px;
+  font-size: 0.82rem;
+}
+.panel-card {
+  padding: 0.9rem;
+}
+.program-panel {
+  display: grid;
+  gap: 0.9rem;
+}
+.program-total {
+  display: grid;
+  justify-items: end;
+  gap: 0.1rem;
+  min-width: 132px;
+  border: 1px solid #c7d2fe;
+  border-radius: 8px;
+  padding: 0.48rem 0.65rem;
+  background: #eef2ff;
+}
+.program-total span {
+  color: #475569;
+  font-size: 0.74rem;
+  font-weight: 900;
+}
+.program-total strong {
+  color: #312e81;
+  font-size: 1.05rem;
+}
+.program-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.session-tabs.roomy {
+  padding-top: 0.2rem;
+}
+.session-pricing-grid {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 0.65rem;
+}
+.session-price-card {
+  display: grid;
+  gap: 0.55rem;
+  border: 1px solid #dbe4ef;
+  border-radius: 8px;
+  padding: 0.65rem;
+  background: #ffffff;
+}
+.session-price-card.active {
+  border-color: #8b5cf6;
+  box-shadow: inset 0 0 0 1px #8b5cf6, 0 10px 24px rgba(124, 58, 237, 0.11);
+}
+.session-card-header {
+  min-height: auto;
+  justify-content: space-between;
+  border: 0;
+  border-radius: 7px;
+  padding: 0.45rem 0.5rem;
+  background: #f8fafc;
+  box-shadow: none;
+}
+.session-card-header:hover {
+  box-shadow: none;
+  background: #f1f5f9;
+}
+.session-card-header span {
+  color: #047857;
+  font-size: 0.76rem;
+  font-weight: 900;
+}
+.course-planner {
+  border: 1px solid #e2e8f0;
+  border-radius: 8px;
+  padding: 0.75rem;
+  background: #f8fafc;
+}
+.course-planner .course-grid {
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  margin-bottom: 0;
+}
+.course-chip {
+  min-height: 58px;
+}
+.planning-board.refined {
+  grid-template-columns: minmax(340px, 0.62fr) minmax(0, 1.38fr);
+}
+.planning-sidebar {
+  padding: 0.8rem;
+}
+.selected-step {
+  grid-template-columns: auto minmax(0, 1fr) 142px;
+  background: #f5f3ff;
+  border-color: #d8b4fe;
+  color: #3b0764;
+}
+.selected-step input,
+.milestone-row input {
+  min-height: 36px;
+  border: 1px solid #cbd5e1;
+  border-radius: 7px;
+  padding: 0.35rem 0.45rem;
+  background: #ffffff;
+  color: #111827;
+}
+.milestone-list {
+  gap: 0.38rem;
+}
+.milestone-row {
+  grid-template-columns: minmax(0, 1fr) 136px;
+  gap: 0.45rem;
+  min-height: 42px;
+  padding: 0.35rem;
+  border-left-width: 5px;
+  background: #fff;
+}
+.milestone-main {
+  min-height: 34px;
+  display: grid;
+  grid-template-columns: auto minmax(0, 1fr) auto;
+  justify-content: stretch;
+  gap: 0.45rem;
+  width: 100%;
+  border: 0;
+  padding: 0.35rem 0.4rem;
+  background: transparent;
+  text-align: left;
+  box-shadow: none;
+}
+.milestone-main:hover {
+  box-shadow: none;
+  background: color-mix(in srgb, var(--tone) 8%, white);
+}
+.milestone-main strong {
+  min-width: 0;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.milestone-main em {
+  color: #64748b;
+  font-size: 0.72rem;
+}
+.calendar-section {
+  padding: 0.8rem;
+}
+.calendar-grid {
+  gap: 0.5rem;
+}
+.mini-calendar {
+  padding: 0.45rem;
+  background: #fff;
+}
+.mini-calendar h3 {
+  font-size: 0.84rem;
+}
+.week > span, .week button {
+  min-height: 25px;
+}
+.planning-board.refined .calendar-grid {
+  grid-template-columns: repeat(auto-fit, minmax(138px, 1fr));
+  align-items: start;
+}
+.mini-calendar {
+  min-width: 0;
+}
+.week button {
+  min-width: 0;
+}
+.week button > span {
+  min-height: auto;
+  border-radius: 0;
+  display: inline;
+  background: transparent;
+  font-size: inherit;
+}
+.lab-actiondock {
+  position: fixed;
+  right: 0.85rem;
+  bottom: 0.85rem;
+  z-index: 40;
+  display: inline-flex;
+  align-items: center;
+  gap: 0.45rem;
+  max-width: min(420px, calc(100vw - 1.7rem));
+  border: 1px solid #d8c2ff;
+  border-radius: 8px;
+  padding: 0.42rem;
+  background: rgba(255, 255, 255, 0.97);
+  box-shadow: 0 16px 38px rgba(42, 35, 92, 0.16);
+  backdrop-filter: blur(14px);
+}
+.lab-actiondock button {
+  min-height: 32px;
+  padding: 0.35rem 0.52rem;
+  font-size: 0.8rem;
+}
+.lab-actiondock strong {
+  padding: 0 0.35rem;
+  color: #047857;
+  white-space: nowrap;
+  font-size: 0.78rem;
+}
+
+@media (max-width: 1280px) {
+  .program-grid, .session-pricing-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .course-planner .course-grid {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+  }
+}
+
+@media (max-width: 1120px) {
+  .planning-board.refined {
+    grid-template-columns: 1fr;
+  }
+  .planning-sidebar {
+    position: static;
+    max-height: none;
+  }
+}
+
+@media (max-width: 760px) {
+  .program-grid, .session-pricing-grid, .course-planner .course-grid {
+    grid-template-columns: 1fr;
+  }
+  .selected-step, .milestone-row {
+    grid-template-columns: 1fr;
+  }
+  .milestone-main {
+    grid-template-columns: auto minmax(0, 1fr);
+  }
+  .milestone-main em {
+    grid-column: 2;
+  }
+  .lab-actiondock {
+    left: auto;
+    right: 0.6rem;
+    bottom: 0.6rem;
+  }
+}
+
+@media print {
+  .lab-actiondock {
+    display: none !important;
+  }
+}

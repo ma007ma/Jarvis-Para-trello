@@ -3,14 +3,14 @@ import { createEmptyLabState } from './labState';
 import { generateSchoolCalendarMonths, getSessionMilestones, writeCourseDates } from './sessionPlanning';
 
 describe('sessionPlanning', () => {
-  it('generates 12 civil-year months from January to December', () => {
+  it('generates 12 school-year months from August to July', () => {
     const months = generateSchoolCalendarMonths('2026');
 
     expect(months).toHaveLength(12);
     expect(months[0].year).toBe(2026);
-    expect(months[0].month).toBe(0);
-    expect(months[11].year).toBe(2026);
-    expect(months[11].month).toBe(11);
+    expect(months[0].month).toBe(7);
+    expect(months[11].year).toBe(2027);
+    expect(months[11].month).toBe(6);
   });
 
   it('generates editable session milestones and manual course dates', () => {

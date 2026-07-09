@@ -448,6 +448,15 @@ export async function writeLabPayloadToDescription(cardId: string, value: string
   await client.updateCardDescription(cardId, upsertDescriptionPayload(card.desc ?? '', value));
 }
 
+export async function removeLabPayloadFromDescription(cardId: string): Promise<void> {
+  const client = new TrelloCustomFieldsClient();
+  const card = await client.getCard(cardId);
+  const nextDescription = removeDescriptionPayload(card.desc ?? '');
+  if (nextDescription !== (card.desc ?? '')) {
+    await client.updateCardDescription(cardId, nextDescription);
+  }
+}
+
 export function extractLabPayloadFromDescription(desc: string): string | null {
   const start = desc.indexOf(DESCRIPTION_PAYLOAD_START);
   if (start === -1) return null;
@@ -477,6 +486,17 @@ function upsertDescriptionPayload(desc: string, value: string): string {
 
   const afterEnd = end + DESCRIPTION_PAYLOAD_END.length;
   return `${desc.slice(0, start).trimEnd()}\n\n${block}\n\n${desc.slice(afterEnd).trimStart()}`.trim();
+}
+
+function removeDescriptionPayload(desc: string): string {
+  const start = desc.indexOf(DESCRIPTION_PAYLOAD_START);
+  if (start === -1) return desc;
+
+  const end = desc.indexOf(DESCRIPTION_PAYLOAD_END, start);
+  if (end === -1) return desc;
+
+  const afterEnd = end + DESCRIPTION_PAYLOAD_END.length;
+  return `${desc.slice(0, start).trimEnd()}\n\n${desc.slice(afterEnd).trimStart()}`.trim();
 }
 
 function getRetryDelay(response: Response, attempt: number): number {

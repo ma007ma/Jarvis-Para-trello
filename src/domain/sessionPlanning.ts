@@ -101,7 +101,11 @@ export function getAllSavedMilestoneDates(state: LabState): Array<{ date: string
 
 export function generateSchoolCalendarMonths(schoolYear: string | null | number | boolean): SchoolCalendarMonth[] {
   const year = parseSchoolYearStart(schoolYear) ?? new Date().getFullYear();
-  return Array.from({ length: 12 }, (_, monthIndex) => buildMonth(year, monthIndex));
+  return Array.from({ length: 12 }, (_, index) => {
+    const month = (7 + index) % 12;
+    const calendarYear = index < 5 ? year : year + 1;
+    return buildMonth(calendarYear, month);
+  });
 }
 
 export function parseSchoolYearStart(schoolYear: string | null | number | boolean): number | null {

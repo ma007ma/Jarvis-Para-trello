@@ -8,7 +8,6 @@ import {
   Plus,
   Printer,
   RefreshCcw,
-  Zap,
 } from 'lucide-react';
 import { FIELD_BY_KEY, TECHNICAL_FIELD_KEYS, VISIBLE_TRELLO_FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
 import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
@@ -35,9 +34,11 @@ import {
   LAB_REACTOR_PAYLOAD_FIELD_NAME,
   mapLabStateToTrelloPayload,
   mapTrelloToLabState,
+  readLabPayloadField,
   readLabPayloadFromDescription,
+  removeLabPayloadFromDescription,
   updateCardCustomFields,
-  writeLabPayloadToDescription,
+  writeLabPayloadField,
   type FieldMapping,
   type TrelloCustomField,
   type TrelloCustomFieldItem,
@@ -78,13 +79,11 @@ const PRIORITY_FIELD_KEYS: FieldKey[] = [
 
 type SyncStatus = 'idle' | 'loading' | 'saving' | 'synced' | 'error';
 type DateTarget = { kind: 'field'; id: string; key: FieldKey } | { kind: 'course'; id: string; session: SessionNumber; index: number };
-type TabId = 'general' | 'sessions' | 'offers' | 'pricing' | 'dates' | 'summary';
+type TabId = 'general' | 'program' | 'dates' | 'summary';
 
 const TABS: Array<{ id: TabId; label: string }> = [
   { id: 'general', label: 'Informations générales' },
-  { id: 'sessions', label: 'Programme & sessions' },
-  { id: 'offers', label: 'Offres combinées' },
-  { id: 'pricing', label: 'Inscriptions & prix' },
+  { id: 'program', label: 'Programme & prix' },
   { id: 'dates', label: 'Dates importantes' },
   { id: 'summary', label: 'Résumé & validation' },
 ];
@@ -118,10 +117,6 @@ export default function App() {
   const [selectedDateTarget, setSelectedDateTarget] = useState<DateTarget | null>(null);
   const [courseSlots, setCourseSlots] = useState<Record<SessionNumber, number>>({ 1: 4, 2: 4, 3: 4, 4: 4 });
   const [activeTab, setActiveTab] = useState<TabId>('general');
-  const [combinedOffers, setCombinedOffers] = useState([
-    { name: 'Automne + hiver', sessions: 'Session 1 + Session 2', price: 340, notes: 'Prix manuel à valider.' },
-    { name: 'Année complète', sessions: 'Session 1 + Session 2 + Session 3 + Session 4', price: 680, notes: 'Rabais appliqué au besoin.' },
-  ]);
   const saveTimer = useRef<number | null>(null);
   const isApplyingRemote = useRef(false);
   const latestState = useRef(state);
@@ -158,6 +153,7 @@ export default function App() {
   const hasTrelloContext = Boolean(context.boardId && context.cardId);
   const sessionPrices = SESSION_NUMBERS.map((session) => Number(state[`sef_s${session}_price` as FieldKey]) || 0);
   const totalSessionPrice = sessionPrices.reduce((sum, price) => sum + price, 0);
+  const pricedSessionCount = sessionPrices.filter((price) => price > 0).length;
   const makePayload = {
     source: 'lab-reactor',
     cardId: context.cardId,
@@ -171,7 +167,8 @@ export default function App() {
       price: state[`sef_s${session}_price` as FieldKey],
       courseDates: readCourseDates(state, session),
     })),
-    combinedOffers,
+    totalSessionPrice,
+    pricedSessionCount,
   };
 
   const loadFromTrello = useCallback(async () => {
@@ -195,9 +192,16 @@ export default function App() {
       const descriptionSource = snapshot?.desc !== null && snapshot?.desc !== undefined
         ? readDescriptionBackupFromText(snapshot.desc)
         : await readDescriptionBackup(nextContext.cardId).catch(() => null);
+      if (snapshot?.desc?.includes('LAB_REACTOR_PAYLOAD_START')) {
+        void removeLabPayloadFromDescription(nextContext.cardId).catch(() => undefined);
+      }
+      const payloadSource = readPayloadBackupFromItems(fields, items);
+      const payloadFieldSource = payloadSource
+        ? null
+        : await readPayloadBackupFromField(nextContext.boardId, nextContext.cardId).catch(() => null);
       const sources: SavedStateSource[] = [
         descriptionSource ?? { label: 'description Trello', state: null },
-        readPayloadBackupFromItems(fields, items) ?? { label: 'payload Trello', state: null },
+        payloadSource ?? payloadFieldSource ?? { label: 'payload Trello', state: null },
         { label: 'champs personnalisés Trello', state: visibleState },
         readLocalDraft(nextContext.boardId, nextContext.cardId) ?? { label: 'brouillon local', state: null },
       ];
@@ -386,15 +390,28 @@ export default function App() {
   const updateSelectedMilestoneDate = (date: string) => {
     const target = selectedDateTarget ?? toDateTarget(selectedMilestone, activeSession);
     if (!target) return;
-    if (target.kind === 'field') {
-      updateField(target.key, date);
-    } else {
-      const dates = [...readCourseDates(state, target.session)];
-      dates[target.index - 1] = date;
-      updateField(`sef_s${target.session}_course_dates` as FieldKey, writeCourseDates(dates));
-      setCourseSlots((current) => ({ ...current, [target.session]: Math.max(current[target.session], target.index) }));
-    }
+    updateDateTarget(target, date);
     setMessage(`${selectedMilestone?.label ?? 'Date'}: ${date}.`);
+  };
+
+  const updateDateTarget = (target: DateTarget, date: string) => {
+    if (target.kind === 'field') {
+      updateField(target.key, date || null);
+      return;
+    }
+
+    const dates = [...readCourseDates(state, target.session)];
+    dates[target.index - 1] = date;
+    updateField(`sef_s${target.session}_course_dates` as FieldKey, writeCourseDates(dates));
+    setCourseSlots((current) => ({ ...current, [target.session]: Math.max(current[target.session], target.index) }));
+  };
+
+  const updateMilestoneDate = (milestone: NonNullable<typeof selectedMilestone>, date: string) => {
+    const target = toDateTarget(milestone, activeSession);
+    if (!target) return;
+    setSelectedDateTarget(target);
+    updateDateTarget(target, date);
+    setMessage(`${milestone.label}: ${date || 'date retirée'}.`);
   };
 
   return (
@@ -461,104 +478,96 @@ export default function App() {
             </section>
           )}
 
-          {activeTab === 'sessions' && (
-            <section className="panel-card">
+          {activeTab === 'program' && (
+            <section className="panel-card program-panel">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">2. Programme & sessions</p>
-                  <h2>Jusqu'à 4 sessions par proposition</h2>
+                  <p className="eyebrow">2. Programme & prix</p>
+                  <h2>Sessions vendues et prix manuels</h2>
                 </div>
-                <div className="session-tabs">
-                  {SESSION_NUMBERS.map((session) => (
-                    <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
-                      Session {session}
-                    </button>
-                  ))}
+                <div className="program-total">
+                  <span>{pricedSessionCount} session{pricedSessionCount > 1 ? 's' : ''}</span>
+                  <strong>{totalSessionPrice.toFixed(2)} $</strong>
                 </div>
               </div>
-              <div className="session-detail-grid">
-                {SESSION_DETAIL_FIELDS.map((suffix) => {
-                  const key = `sef_s${activeSession}_${suffix}` as FieldKey;
-                  return <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />;
-                })}
-              </div>
-              <div className="course-grid">
-                {Array.from({ length: visibleCourseCount }, (_, index) => {
-                  const courseIndex = index + 1;
-                  return (
-                    <button
-                      key={courseIndex}
-                      type="button"
-                      className={`course-chip ${selectedDateTarget?.kind === 'course' && selectedDateTarget.index === courseIndex ? 'active' : ''}`}
-                      onClick={() => setSelectedDateTarget({ kind: 'course', id: `course_${courseIndex}`, session: activeSession, index: courseIndex })}
-                    >
-                      Cours {courseIndex}<span>{activeCourseDates[index] ?? 'Date à choisir'}</span>
-                    </button>
-                  );
-                })}
-              </div>
-              {visibleCourseCount < 12 && (
-                <button type="button" className="add-course-button" onClick={() => setCourseSlots((current) => ({ ...current, [activeSession]: Math.min(12, current[activeSession] + 1) }))}>
-                  <Plus size={17} />Ajouter cours
-                </button>
-              )}
-            </section>
-          )}
 
-          {activeTab === 'offers' && (
-            <section className="panel-card">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">3. Offres combinées</p>
-                  <h2>Prix manuels, aucun calcul automatique</h2>
-                </div>
+              <div className="program-grid">
+                <FieldInput field={FIELD_BY_KEY.sef_program} value={state.sef_program} onChange={(value) => updateField('sef_program', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_group_target} value={state.sef_group_target} onChange={(value) => updateField('sef_group_target', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_grade_range} value={state.sef_grade_range} onChange={(value) => updateField('sef_grade_range', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_weeks} value={state.sef_weeks} onChange={(value) => updateField('sef_weeks', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_day_of_week} value={state.sef_day_of_week} onChange={(value) => updateField('sef_day_of_week', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_start_time} value={state.sef_start_time} onChange={(value) => updateField('sef_start_time', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_end_time} value={state.sef_end_time} onChange={(value) => updateField('sef_end_time', value)} />
+                <FieldInput field={FIELD_BY_KEY.sef_room} value={state.sef_room} onChange={(value) => updateField('sef_room', value)} />
               </div>
-              <div className="offer-table">
-                {combinedOffers.map((offer, index) => (
-                  <div className="offer-row" key={index}>
-                    <input value={offer.name} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />
-                    <input value={offer.sessions} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, sessions: event.target.value } : item))} />
-                    <input type="number" value={offer.price} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, price: Number(event.target.value) } : item))} />
-                    <input value={offer.notes} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, notes: event.target.value } : item))} />
-                  </div>
+
+              <div className="session-tabs roomy">
+                {SESSION_NUMBERS.map((session) => (
+                  <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
+                    Session {session}
+                  </button>
                 ))}
               </div>
-              <button type="button" className="add-course-button" onClick={() => setCombinedOffers((offers) => [...offers, { name: 'Nouvelle offre', sessions: 'Session 1', price: 0, notes: '' }])}>
-                <Plus size={17} />Ajouter une offre
-              </button>
-            </section>
-          )}
 
-          {activeTab === 'pricing' && (
-            <section className="panel-card">
-              <div className="section-heading">
-                <div>
-                  <p className="eyebrow">4. Inscriptions & prix</p>
-                  <h2>Prix saisis manuellement</h2>
-                </div>
-              </div>
-              <div className="price-grid">
+              <div className="session-pricing-grid">
                 {SESSION_NUMBERS.map((session) => {
                   const themeKey = `sef_s${session}_theme` as FieldKey;
                   const priceKey = `sef_s${session}_price` as FieldKey;
+                  const price = Number(state[priceKey]) || 0;
                   return (
-                    <div className="price-card" key={session}>
-                      <h3>Session {session}</h3>
+                    <article className={`session-price-card ${activeSession === session ? 'active' : ''}`} key={session}>
+                      <button type="button" className="session-card-header" onClick={() => setActiveSession(session)}>
+                        <strong>Session {session}</strong>
+                        <span>{price > 0 ? `${price.toFixed(2)} $` : 'Prix à saisir'}</span>
+                      </button>
                       <FieldInput field={FIELD_BY_KEY[themeKey]} value={state[themeKey]} onChange={(value) => updateField(themeKey, value)} />
                       <FieldInput field={FIELD_BY_KEY[priceKey]} value={state[priceKey]} onChange={(value) => updateField(priceKey, value)} />
-                    </div>
+                    </article>
                   );
                 })}
+              </div>
+
+              <div className="course-planner">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">Cours rapides</p>
+                    <h2>Session {activeSession}</h2>
+                  </div>
+                  {visibleCourseCount < 12 && (
+                    <button type="button" onClick={() => setCourseSlots((current) => ({ ...current, [activeSession]: Math.min(12, current[activeSession] + 1) }))}>
+                      <Plus size={17} />Ajouter cours
+                    </button>
+                  )}
+                </div>
+                <div className="course-grid">
+                  {Array.from({ length: visibleCourseCount }, (_, index) => {
+                    const courseIndex = index + 1;
+                    return (
+                      <button
+                        key={courseIndex}
+                        type="button"
+                        className={`course-chip ${selectedDateTarget?.kind === 'course' && selectedDateTarget.index === courseIndex ? 'active' : ''}`}
+                        onClick={() => {
+                          setActiveTab('dates');
+                          setSelectedDateTarget({ kind: 'course', id: `course_${courseIndex}`, session: activeSession, index: courseIndex });
+                        }}
+                      >
+                        Cours {courseIndex}<span>{activeCourseDates[index] ?? 'Date à choisir'}</span>
+                      </button>
+                    );
+                  })}
+                </div>
               </div>
             </section>
           )}
 
           {activeTab === 'dates' && (
-            <section className="planning-board" aria-label="Dates et calendrier">
+            <section className="planning-board refined" aria-label="Dates et calendrier">
               <div className="planning-sidebar">
                 <div className="section-heading compact">
                   <div>
-                    <p className="eyebrow">5. Dates importantes</p>
+                    <p className="eyebrow">3. Dates importantes</p>
                     <h2>Session {activeSession}</h2>
                   </div>
                   <div className="session-tabs">
@@ -575,21 +584,30 @@ export default function App() {
                     <span>Étape active</span>
                     <strong>{selectedMilestone?.label ?? 'Aucune étape'}</strong>
                   </div>
+                  <input
+                    type="date"
+                    value={selectedMilestone?.date ?? ''}
+                    onChange={(event) => updateSelectedMilestoneDate(event.target.value)}
+                  />
                 </div>
                 <div className="milestone-list">
-                  {visibleMilestones.map((milestone) => (
-                    <button
-                      key={milestone.id}
-                      type="button"
-                      className={`milestone-row ${milestone.tone} ${selectedMilestone?.id === milestone.id ? 'selected' : ''}`}
-                      onClick={() => setSelectedDateTarget(toDateTarget(milestone, activeSession))}
-                    >
-                      <span className="milestone-tone" />
-                      <strong>{milestone.label}</strong>
-                      <span>{milestone.date ?? '--'}</span>
-                      <em>{milestone.status}</em>
-                    </button>
-                  ))}
+                  {visibleMilestones.map((milestone) => {
+                    const target = toDateTarget(milestone, activeSession);
+                    return (
+                      <div key={milestone.id} className={`milestone-row ${milestone.tone} ${selectedMilestone?.id === milestone.id ? 'selected' : ''}`}>
+                        <button type="button" className="milestone-main" onClick={() => setSelectedDateTarget(target)}>
+                          <span className="milestone-tone" />
+                          <strong>{milestone.label}</strong>
+                          <em>{milestone.status}</em>
+                        </button>
+                        <input
+                          type="date"
+                          value={milestone.date ?? ''}
+                          onChange={(event) => updateMilestoneDate(milestone, event.target.value)}
+                        />
+                      </div>
+                    );
+                  })}
                 </div>
               </div>
               <CalendarPanel
@@ -597,7 +615,7 @@ export default function App() {
                 milestoneDates={milestoneDates}
                 selectedMilestone={selectedMilestone}
                 onDateSelect={updateSelectedMilestoneDate}
-                yearLabel={valueOrDash(state.sef_school_year)}
+                yearLabel={formatSchoolYearRange(calendarMonths)}
               />
             </section>
           )}
@@ -606,7 +624,7 @@ export default function App() {
             <section className="panel-card">
               <div className="section-heading">
                 <div>
-                  <p className="eyebrow">6. Résumé & validation</p>
+                  <p className="eyebrow">4. Résumé & validation</p>
                   <h2>{validation.status}</h2>
                 </div>
                 <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
@@ -641,7 +659,7 @@ export default function App() {
           <dl>
             <dt>École</dt><dd>{valueOrDash(state.sef_school_name)}</dd>
             <dt>Contact</dt><dd>{valueOrDash(state.sef_contact_name)}</dd>
-            <dt>Sessions</dt><dd>{SESSION_NUMBERS.length}</dd>
+            <dt>Sessions vendues</dt><dd>{pricedSessionCount || '-'}</dd>
             <dt>Total sessions</dt><dd>{totalSessionPrice.toFixed(2)} $</dd>
             <dt>Statut</dt><dd>{valueOrDash(state.sef_status)}</dd>
           </dl>
@@ -654,15 +672,14 @@ export default function App() {
         </aside>
       </div>
 
-      <footer className="lab-actionbar">
+      <footer className="lab-actiondock" aria-label="Actions rapides">
         {context.boardId && !context.cardId && (
           <button type="button" className="primary-action" onClick={createTrelloCardFromBoard}>
             <Plus size={18} />Créer carte Trello
           </button>
         )}
         <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
-        <span>Autosave Trello actif. Aucun secret stocké dans le frontend.</span>
-        <strong>{hasTrelloContext ? 'Connecté à Trello' : 'Mode mock/local'}</strong>
+        <strong>{hasTrelloContext ? 'Trello sync' : 'Mode local'}</strong>
       </footer>
     </main>
   );
@@ -762,6 +779,13 @@ function CalendarPanel({
 
 function formatCalendarDate(year: number, month: number, day: number): string {
   return `${year}-${String(month + 1).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function formatSchoolYearRange(months: ReturnType<typeof generateSchoolCalendarMonths>): string {
+  const first = months[0];
+  const last = months[months.length - 1];
+  if (!first || !last) return '-';
+  return `Août ${first.year} à juillet ${last.year}`;
 }
 
 function FieldSectionView({ title, fields, state, onChange }: { title: string; fields: FieldDefinition[]; state: LabState; onChange: (key: FieldKey, value: LabValue) => void }) {
@@ -934,6 +958,11 @@ function readPayloadBackupFromItems(fields: TrelloCustomField[], items: TrelloCu
   return parsed ? { label: 'payload Trello', ...parsed } : null;
 }
 
+async function readPayloadBackupFromField(boardId: string, cardId: string): Promise<SavedStateSource | null> {
+  const parsed = parseSavedStateSource(await readLabPayloadField(boardId, cardId));
+  return parsed ? { label: 'payload Trello', ...parsed } : null;
+}
+
 function readVisibleCustomFieldState(fields: TrelloCustomField[], items: TrelloCustomFieldItem[]): LabState | null {
   if (!fields.length) return null;
   return mapTrelloToLabState(fields, items);
@@ -957,13 +986,14 @@ function readDescriptionBackupFromText(value: string | null): SavedStateSource |
 async function saveDurableState(_boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
   const serialized = JSON.stringify({ savedAt: new Date().toISOString(), state: stateToSave });
   const writes: Array<Promise<unknown>> = [
-    writeLabPayloadToDescription(cardId, serialized),
+    writeLabPayloadField(_boardId, cardId, serialized),
   ];
   const results = await Promise.allSettled(writes);
   if (results.every((result) => result.status === 'rejected')) {
     const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;
     throw firstError instanceof Error ? firstError : new Error('Impossible de sauvegarder dans Trello.');
   }
+  void removeLabPayloadFromDescription(cardId).catch(() => undefined);
 }
 
 function parseSavedState(value: unknown): LabState | null {
