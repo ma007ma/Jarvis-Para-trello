@@ -41,7 +41,7 @@ jobs:
       - name: Build
         run: pnpm run build
         env:
-          VITE_TRELLO_API_KEY: ${{ secrets.VITE_TRELLO_API_KEY }}
+          VITE_TRELLO_API_KEY: a9936eee9f445b63329fe1ab29b41e1f
           VITE_TRELLO_API_BASE: https://api.trello.com/1
 
       - name: Configure Pages
