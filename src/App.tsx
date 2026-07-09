@@ -12,13 +12,12 @@ import {
 import {
   FIELD_BY_KEY,
   FIELD_REGISTRY,
-  POWER_UP_DATA_FIELD_KEYS,
   TECHNICAL_FIELD_KEYS,
   VISIBLE_TRELLO_FIELD_REGISTRY,
   type FieldDefinition,
   type FieldKey,
 } from './config/fieldRegistry';
-import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
+import { createEmptyLabState, isEmptyLabValue, type LabState, type LabValue } from './domain/labState';
 import {
   generateSchoolCalendarMonths,
   getActiveSessionNumber,
@@ -44,7 +43,6 @@ import {
   mapTrelloToLabState,
   readLabPayloadField,
   readLabPayloadFromDescription,
-  removeLabPayloadFromDescription,
   updateCardCustomFields,
   writeLabPayloadToDescription,
   type FieldMapping,
@@ -53,7 +51,7 @@ import {
 } from './trello/customFieldsClient';
 import { buildSummary } from './utils/exporters';
 
-const AUTOSAVE_DELAY_MS = 5000;
+const AUTOSAVE_DELAY_MS = 800;
 const VISIBLE_FIELD_SYNC_INTERVAL_MS = 10000;
 const RATE_LIMIT_RETRY_MS = 30000;
 const LOCAL_DRAFT_PREFIX = 'lab-reactor-draft:';
@@ -110,6 +108,13 @@ interface SavedStateSource {
   savedAt?: string | null;
 }
 
+interface CompactPowerUpPayload {
+  v: 2;
+  s: string;
+  h: string;
+  d: Array<[number, LabValue]>;
+}
+
 interface PowerUpSnapshot {
   fields: TrelloCustomField[];
   items: TrelloCustomFieldItem[];
@@ -135,7 +140,6 @@ export default function App() {
   const lastDurableHash = useRef<string | null>(null);
   const lastVisibleFieldSyncAt = useRef(0);
   const retryTimer = useRef<number | null>(null);
-  const autoOpenAttempted = useRef(false);
 
   const validation = useMemo(() => validateLabState(state), [state]);
   const calendarMonths = useMemo(() => generateSchoolCalendarMonths(state.sef_school_year), [state.sef_school_year]);
@@ -210,16 +214,18 @@ export default function App() {
         ? null
         : await readPayloadBackupFromField(nextContext.boardId, nextContext.cardId).catch(() => null);
       const localDraftSource = readLocalDraft(nextContext.boardId, nextContext.cardId);
-      const legacySources: SavedStateSource[] = [
+      const durableSources: SavedStateSource[] = [
+        powerUpSource ?? { label: 'données Power-Up Trello', state: null },
         descriptionSource ?? { label: 'description Trello', state: null },
         payloadSource ?? payloadFieldSource ?? { label: 'payload Trello', state: null },
         localDraftSource ?? { label: 'brouillon local', state: null },
       ];
-      const bestSource = chooseBestSavedState(legacySources);
+      const bestSource = chooseBestSavedState(durableSources);
+      const baseState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
+      const visibleStatePatch = bestSource ? pickMissingStateKeys(visibleStateLayer, baseState) : visibleStateLayer;
       const nextState = mergeLabStateLayers(
-        bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' }),
-        visibleStateLayer,
-        powerUpSource?.state ? pickStateKeys(powerUpSource.state, POWER_UP_DATA_FIELD_KEYS) : null,
+        baseState,
+        visibleStatePatch,
       );
 
       isApplyingRemote.current = true;
@@ -229,7 +235,7 @@ export default function App() {
       lastDurableHash.current = calculateSyncHash(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage(powerUpSource ? 'Fiche chargée depuis Trello et données Power-Up partagées.' : bestSource ? `Fiche chargée depuis ${bestSource.label}.` : 'Carte Trello synchronisée.');
+      setMessage(bestSource ? `Fiche chargée depuis ${bestSource.label}.` : visibleStateLayer ? 'Fiche chargée depuis les champs Trello.' : 'Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -365,31 +371,6 @@ export default function App() {
   }, [loadFromTrello]);
 
   useEffect(() => {
-    if (!didLoad || autoOpenAttempted.current || !context.boardId || !context.cardId) return;
-    const params = new URLSearchParams(window.location.search);
-    if (params.get('autoOpen') !== '1') return;
-
-    autoOpenAttempted.current = true;
-    if (!shouldAutoOpenModal(context.cardId)) return;
-
-    const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
-    if (!t) return;
-    params.delete('autoOpen');
-    params.delete('section');
-    params.set('panel', 'lab');
-    params.set('boardId', context.boardId);
-    params.set('cardId', context.cardId);
-    if (context.cardName) params.set('cardName', context.cardName);
-    const url = `./lab.html?${params.toString()}`;
-    void t.modal({
-      title: 'Lab Reactor',
-      url: t.signUrl ? t.signUrl(url) : url,
-      height: 920,
-      fullscreen: true,
-    }).catch(() => undefined);
-  }, [context.boardId, context.cardId, context.cardName, didLoad]);
-
-  useEffect(() => {
     if (!didLoad || isApplyingRemote.current) return;
     const nextWarnings = validation.alerts.map((alert) => alert.message).join('; ');
     setState((current) => {
@@ -415,6 +396,25 @@ export default function App() {
       if (saveTimer.current) window.clearTimeout(saveTimer.current);
     };
   }, [didLoad, hasTrelloContext, saveNow, state]);
+
+  useEffect(() => {
+    if (!didLoad || !hasTrelloContext) return;
+
+    const flushPendingSave = () => {
+      if (lastDurableHash.current === calculateSyncHash(latestState.current)) return;
+      void saveNow(latestState.current);
+    };
+    const flushWhenHidden = () => {
+      if (document.visibilityState === 'hidden') flushPendingSave();
+    };
+
+    window.addEventListener('pagehide', flushPendingSave);
+    document.addEventListener('visibilitychange', flushWhenHidden);
+    return () => {
+      window.removeEventListener('pagehide', flushPendingSave);
+      document.removeEventListener('visibilitychange', flushWhenHidden);
+    };
+  }, [didLoad, hasTrelloContext, saveNow]);
 
   const updateField = (key: FieldKey, value: LabValue) => {
     setState((current) => ({ ...current, [key]: value }));
@@ -878,7 +878,12 @@ function chooseBestSavedState(sources: SavedStateSource[]): { label: string; sta
     .filter((source): source is SavedStateSource & { state: LabState } => Boolean(source.state))
     .map((source) => ({ ...source, score: scoreSavedState(source.state), savedAtMs: source.savedAt ? Date.parse(source.savedAt) || 0 : 0 }))
     .filter((source) => source.score > 0)
-    .sort((left, right) => right.score - left.score || right.savedAtMs - left.savedAtMs);
+    .sort((left, right) => {
+      if (left.savedAtMs || right.savedAtMs) {
+        return right.savedAtMs - left.savedAtMs || right.score - left.score;
+      }
+      return right.score - left.score;
+    });
 
   return ranked[0] ? { label: ranked[0].label, state: ranked[0].state } : null;
 }
@@ -916,6 +921,14 @@ function pickStateKeys(state: LabState, keys: readonly FieldKey[]): Partial<LabS
   return Object.fromEntries(keys.map((key) => [key, state[key]])) as Partial<LabState>;
 }
 
+function pickMissingStateKeys(source: Partial<LabState> | null | undefined, target: LabState): Partial<LabState> | null {
+  if (!source) return null;
+  return Object.fromEntries(
+    (Object.entries(source) as Array<[FieldKey, LabValue]>)
+      .filter(([key, value]) => !isEmptyLabValue(value) && isEmptyLabValue(target[key])),
+  ) as Partial<LabState>;
+}
+
 function formatSaveMessage(storage: DurableStorage, mirroredVisibleFields: boolean): string {
   if (storage === 'plugin-data') {
     return mirroredVisibleFields ? 'Sauvegardé dans Trello et données Power-Up partagées.' : 'Données Power-Up partagées sauvegardées.';
@@ -928,18 +941,6 @@ function formatSaveMessage(storage: DurableStorage, mirroredVisibleFields: boole
 
 function localDraftKey(boardId: string, cardId: string): string {
   return `${LOCAL_DRAFT_PREFIX}${boardId}:${cardId}`;
-}
-
-function shouldAutoOpenModal(cardId: string): boolean {
-  try {
-    const storageKey = `lab-reactor-auto-open:${cardId}`;
-    const lastOpenedAt = Number(window.sessionStorage.getItem(storageKey) ?? 0);
-    if (Date.now() - lastOpenedAt < 10 * 60 * 1000) return false;
-    window.sessionStorage.setItem(storageKey, String(Date.now()));
-  } catch {
-    // If sessionStorage is unavailable, opening once per iframe load is still safer than crashing the Power-Up.
-  }
-  return true;
 }
 
 function readLocalDraft(boardId: string, cardId: string): SavedStateSource | null {
@@ -1078,7 +1079,6 @@ async function saveDurableState(_boardId: string, cardId: string, stateToSave: L
 
   try {
     await writePowerUpSharedBackup(cardId, stateToSave);
-    void removeLabPayloadFromDescription(cardId).catch(() => undefined);
     return 'plugin-data';
   } catch (pluginError) {
     try {
@@ -1098,16 +1098,26 @@ async function writePowerUpSharedBackup(cardId: string, stateToSave: LabState): 
   const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   if (!t) throw new Error('Stockage Power-Up Trello indisponible.');
 
-  const payload = {
-    savedAt: new Date().toISOString(),
-    state: pickStateKeys(stateToSave, POWER_UP_DATA_FIELD_KEYS),
-  };
+  const payload = createCompactPowerUpPayload(stateToSave);
   const projectedSize = JSON.stringify({ [POWER_UP_PAYLOAD_KEY]: payload }).length;
   if (projectedSize > 3900) {
     throw new Error('Données Power-Up trop volumineuses pour le stockage Trello partagé.');
   }
 
   await t.set(cardId, 'shared', POWER_UP_PAYLOAD_KEY, payload);
+}
+
+function createCompactPowerUpPayload(stateToSave: LabState): CompactPowerUpPayload {
+  return {
+    v: 2,
+    s: new Date().toISOString(),
+    h: calculateSyncHash(stateToSave),
+    d: FIELD_REGISTRY.flatMap((field, index) => {
+      const value = stateToSave[field.key as FieldKey];
+      if (value === null || value === '' || value === false) return [];
+      return [[index, value] as [number, LabValue]];
+    }),
+  };
 }
 
 function parseSavedState(value: unknown): LabState | null {
@@ -1119,6 +1129,9 @@ function parseSavedStateSource(value: unknown): { state: LabState; savedAt?: str
   try {
     const parsed = typeof value === 'string' ? JSON.parse(value) : value;
     if (!parsed || typeof parsed !== 'object') return null;
+    const compact = parseCompactPowerUpPayload(parsed);
+    if (compact) return compact;
+
     if ('state' in parsed && parsed.state && typeof parsed.state === 'object') {
       return {
         state: createEmptyLabState(parsed.state as Partial<LabState>),
@@ -1133,6 +1146,29 @@ function parseSavedStateSource(value: unknown): { state: LabState; savedAt?: str
   } catch {
     return null;
   }
+}
+
+function parseCompactPowerUpPayload(value: object): { state: LabState; savedAt?: string | null } | null {
+  const candidate = value as Partial<CompactPowerUpPayload>;
+  if (candidate.v !== 2 || !Array.isArray(candidate.d)) return null;
+
+  const partial: Partial<LabState> = {};
+  for (const entry of candidate.d) {
+    if (!Array.isArray(entry) || entry.length < 2) continue;
+    const [index, rawValue] = entry;
+    if (!Number.isInteger(index) || index < 0 || index >= FIELD_REGISTRY.length) continue;
+    if (!isSerializableLabValue(rawValue)) continue;
+    partial[FIELD_REGISTRY[index].key as FieldKey] = rawValue;
+  }
+
+  return {
+    state: createEmptyLabState(partial),
+    savedAt: typeof candidate.s === 'string' ? candidate.s : null,
+  };
+}
+
+function isSerializableLabValue(value: unknown): value is LabValue {
+  return value === null || typeof value === 'string' || typeof value === 'number' || typeof value === 'boolean';
 }
 
 function toDateTarget(milestone: { id: string; fieldKey?: FieldKey; courseIndex?: number } | undefined, session: SessionNumber): DateTarget | null {
