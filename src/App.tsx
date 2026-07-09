@@ -707,12 +707,30 @@ function FieldInput({ field, value, onChange }: { field: FieldDefinition; value:
 }
 
 async function readTrelloContext(): Promise<TrelloContext> {
+  const params = new URLSearchParams(window.location.search);
+  const paramBoardId = params.get('boardId');
+  const paramCardId = params.get('cardId');
+  const paramCardName = params.get('cardName');
+  if (paramBoardId && paramCardId) {
+    return { boardId: paramBoardId, cardId: paramCardId, cardName: paramCardName ?? 'Carte Lab Reactor' };
+  }
+
   const t = window.TrelloPowerUp?.iframe?.();
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
-  const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
-  const boardData = board as { id?: string };
-  const cardData = card as { id?: string; name?: string };
-  return { boardId: boardData.id ?? null, cardId: cardData.id ?? null, cardName: cardData.name ?? 'Carte Trello' };
+  try {
+    const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
+    const boardData = board as { id?: string };
+    const cardData = card as { id?: string; name?: string };
+    return { boardId: boardData.id ?? null, cardId: cardData.id ?? null, cardName: cardData.name ?? 'Carte Trello' };
+  } catch {
+    try {
+      const board = await t.board('id');
+      const boardData = board as { id?: string };
+      return { boardId: boardData.id ?? null, cardId: null, cardName: 'Mode tableau' };
+    } catch {
+      return { boardId: null, cardId: null, cardName: 'Carte locale' };
+    }
+  }
 }
 
 function toDateTarget(milestone: { id: string; fieldKey?: FieldKey; courseIndex?: number } | undefined, session: SessionNumber): DateTarget | null {

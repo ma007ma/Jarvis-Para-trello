@@ -4,6 +4,7 @@ import App from './App';
 import './styles.css';
 
 const POWER_UP_URL = './lab.html?panel=lab&v=lab-reactor-card-view';
+const ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
 const isPanel = new URLSearchParams(window.location.search).get('panel') === 'lab';
 type TrelloModalContext = { modal: (options: Record<string, unknown>) => Promise<void>; signUrl?: (url: string) => string };
 
@@ -25,18 +26,20 @@ if (window.TrelloPowerUp && !isPanel) {
     'card-buttons': () => [
       {
         text: 'Lab Reactor',
+        icon: ICON_URL,
         callback: openLabReactor,
       },
     ],
     'board-buttons': () => [
       {
         text: 'Lab Reactor',
+        icon: ICON_URL,
         callback: openLabReactor,
       },
     ],
     'card-back-section': (t: { signUrl?: (url: string) => string }) => ({
       title: 'Lab Reactor',
-      icon: 'https://ma007ma.github.io/Jarvis-Para-trello/favicon.svg',
+      icon: ICON_URL,
       content: {
         type: 'iframe',
         url: getSignedPanelUrl(t),

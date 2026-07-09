@@ -1,0 +1,6 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 64 64" role="img" aria-label="Lab Reactor">
+  <rect width="64" height="64" rx="12" fill="#6b7280"/>
+  <path d="M26 12h12v6l-3 4v9l13 18c2 3 0 7-4 7H20c-4 0-6-4-4-7l13-18v-9l-3-4v-6Z" fill="#f9fafb"/>
+  <path d="M25 42h14l5 8H20l5-8Z" fill="#9ca3af"/>
+  <path d="M27 18h10" stroke="#4b5563" stroke-width="3" stroke-linecap="round"/>
+</svg>
