@@ -8,6 +8,7 @@ import {
   Plus,
   Printer,
   RefreshCcw,
+  Trash2,
 } from 'lucide-react';
 import {
   FIELD_BY_KEY,
@@ -43,6 +44,7 @@ import {
   mapTrelloToLabState,
   readLabPayloadField,
   readLabPayloadFromDescription,
+  removeLabPayloadFromDescription,
   updateCardCustomFields,
   writeLabPayloadToDescription,
   type FieldMapping,
@@ -56,6 +58,7 @@ const VISIBLE_FIELD_SYNC_INTERVAL_MS = 10000;
 const RATE_LIMIT_RETRY_MS = 30000;
 const LOCAL_DRAFT_PREFIX = 'lab-reactor-draft:';
 const POWER_UP_PAYLOAD_KEY = 'labPayloadV2';
+const LAB_REACTOR_CACHE_VERSION = 'lab-reactor-20260709-card-section1';
 const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
 const FORCE_VISIBLE_FIELD_SYNC = true;
 const TRELLO_IFRAME_OPTIONS = {
@@ -121,12 +124,29 @@ interface PowerUpSnapshot {
   desc: string | null;
 }
 
+interface LoadedCardState {
+  state: LabState;
+  mapping: Partial<FieldMapping>;
+  sourceLabel: string | null;
+  hasVisibleState: boolean;
+  hasDescriptionBackup: boolean;
+}
+
 export default function App() {
+  if (isCardSectionRoute()) {
+    return <CardBackPreview />;
+  }
+
+  return <LabReactorApp />;
+}
+
+function LabReactorApp() {
   const [state, setState] = useState<LabState>(() => createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' }));
   const [context, setContext] = useState<TrelloContext>({ boardId: null, cardId: null, cardName: 'Carte locale' });
   const [mapping, setMapping] = useState<Partial<FieldMapping>>({});
   const [syncStatus, setSyncStatus] = useState<SyncStatus>('idle');
   const [message, setMessage] = useState('Mode local prêt.');
+  const [hasLegacyDescriptionBackup, setHasLegacyDescriptionBackup] = useState(false);
   const [didLoad, setDidLoad] = useState(false);
   const [activeSession, setActiveSession] = useState<SessionNumber>(1);
   const [selectedDateTarget, setSelectedDateTarget] = useState<DateTarget | null>(null);
@@ -199,43 +219,18 @@ export default function App() {
     setSyncStatus('loading');
     setMessage('Synchronisation depuis Trello...');
     try {
-      const snapshot = await readPowerUpSnapshot().catch(() => null);
-      const fields = snapshot?.fields.length ? snapshot.fields : await getBoardCustomFields(nextContext.boardId).catch(() => []);
-      const nextMapping = buildFieldMapping(fields);
-      const items = snapshot?.items.length ? snapshot.items : fields.length ? await getCardCustomFieldItems(nextContext.cardId).catch(() => []) : [];
-      const visibleState = readVisibleCustomFieldState(fields, items);
-      const visibleStateLayer = visibleState ? projectTrelloStateToExistingFields(visibleState, fields) : null;
-      const descriptionSource = snapshot?.desc !== null && snapshot?.desc !== undefined
-        ? readDescriptionBackupFromText(snapshot.desc)
-        : await readDescriptionBackup(nextContext.cardId).catch(() => null);
-      const powerUpSource = await readPowerUpSharedBackup(nextContext.cardId).catch(() => null);
-      const payloadSource = readPayloadBackupFromItems(fields, items);
-      const payloadFieldSource = payloadSource
-        ? null
-        : await readPayloadBackupFromField(nextContext.boardId, nextContext.cardId).catch(() => null);
-      const localDraftSource = readLocalDraft(nextContext.boardId, nextContext.cardId);
-      const durableSources: SavedStateSource[] = [
-        powerUpSource ?? { label: 'données Power-Up Trello', state: null },
-        descriptionSource ?? { label: 'description Trello', state: null },
-        payloadSource ?? payloadFieldSource ?? { label: 'payload Trello', state: null },
-        localDraftSource ?? { label: 'brouillon local', state: null },
-      ];
-      const bestSource = chooseBestSavedState(durableSources);
-      const baseState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
-      const visibleStatePatch = bestSource ? pickMissingStateKeys(visibleStateLayer, baseState) : visibleStateLayer;
-      const nextState = mergeLabStateLayers(
-        baseState,
-        visibleStatePatch,
-      );
+      const loaded = await loadSavedCardState(nextContext.boardId, nextContext.cardId);
+      const nextState = loaded.state;
 
       isApplyingRemote.current = true;
       latestState.current = nextState;
-      setMapping(nextMapping);
+      setMapping(loaded.mapping);
       setState(nextState);
+      setHasLegacyDescriptionBackup(loaded.hasDescriptionBackup);
       lastDurableHash.current = calculateSyncHash(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage(bestSource ? `Fiche chargée depuis ${bestSource.label}.` : visibleStateLayer ? 'Fiche chargée depuis les champs Trello.' : 'Carte Trello synchronisée.');
+      setMessage(loaded.sourceLabel ? `Fiche chargée depuis ${loaded.sourceLabel}.` : loaded.hasVisibleState ? 'Fiche chargée depuis les champs Trello.' : 'Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -365,6 +360,21 @@ export default function App() {
       setMessage(error instanceof Error ? error.message : 'Erreur pendant la création de la carte Trello.');
     }
   }, [context.boardId, state]);
+
+  const cleanupDescriptionBackup = useCallback(async () => {
+    if (!context.cardId) return;
+    setSyncStatus('saving');
+    setMessage('Nettoyage de la description Trello...');
+    try {
+      await removeLabPayloadFromDescription(context.cardId);
+      setHasLegacyDescriptionBackup(false);
+      setSyncStatus('synced');
+      setMessage('Ancien payload retiré de la description. Les données restent dans Lab Reactor.');
+    } catch (error) {
+      setSyncStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Impossible de nettoyer la description Trello.');
+    }
+  }, [context.cardId]);
 
   useEffect(() => {
     void loadFromTrello();
@@ -717,9 +727,134 @@ export default function App() {
             <Plus size={18} />Créer carte Trello
           </button>
         )}
+        {hasLegacyDescriptionBackup && context.cardId && (
+          <button type="button" onClick={cleanupDescriptionBackup}>
+            <Trash2 size={18} />Nettoyer description
+          </button>
+        )}
         <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
         <strong>{hasTrelloContext ? 'Trello sync' : 'Mode local'}</strong>
       </footer>
+    </main>
+  );
+}
+
+function CardBackPreview() {
+  const [state, setState] = useState<LabState>(() => createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' }));
+  const [context, setContext] = useState<TrelloContext>({ boardId: null, cardId: null, cardName: 'Carte locale' });
+  const [syncStatus, setSyncStatus] = useState<SyncStatus>('loading');
+  const [message, setMessage] = useState('Lecture de la fiche...');
+  const [hasLegacyDescriptionBackup, setHasLegacyDescriptionBackup] = useState(false);
+
+  const validation = useMemo(() => validateLabState(state), [state]);
+  const pricedSessionCount = SESSION_NUMBERS.filter((session) => Number(state[`sef_s${session}_price` as FieldKey]) > 0).length;
+  const totalSessionPrice = SESSION_NUMBERS.reduce((sum, session) => sum + (Number(state[`sef_s${session}_price` as FieldKey]) || 0), 0);
+
+  useEffect(() => {
+    let cancelled = false;
+
+    const loadPreview = async () => {
+      const nextContext = await readTrelloContext();
+      if (cancelled) return;
+      setContext(nextContext);
+
+      if (!nextContext.boardId || !nextContext.cardId) {
+        setSyncStatus('error');
+        setMessage('Ouvrez depuis une carte Trello.');
+        return;
+      }
+
+      try {
+        const loaded = await loadSavedCardState(nextContext.boardId, nextContext.cardId);
+        if (cancelled) return;
+        setState(loaded.state);
+        setHasLegacyDescriptionBackup(loaded.hasDescriptionBackup);
+        setSyncStatus('synced');
+        setMessage(loaded.sourceLabel ? `Chargé depuis ${loaded.sourceLabel}.` : 'Fiche prête.');
+      } catch (error) {
+        if (cancelled) return;
+        setSyncStatus('error');
+        setMessage(error instanceof Error ? error.message : 'Impossible de lire la fiche.');
+      }
+    };
+
+    void loadPreview();
+    return () => {
+      cancelled = true;
+    };
+  }, []);
+
+  const openFullPanel = async () => {
+    const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+    if (!t) {
+      setSyncStatus('error');
+      setMessage('Contexte Trello indisponible.');
+      return;
+    }
+
+    const url = buildLabPanelUrl(context);
+    await t.modal({
+      title: 'Lab Reactor',
+      url: t.signUrl ? t.signUrl(url) : url,
+      height: 920,
+      fullscreen: true,
+    });
+  };
+
+  const cleanupDescriptionBackup = async () => {
+    if (!context.cardId) return;
+    setSyncStatus('saving');
+    setMessage('Nettoyage...');
+    try {
+      await removeLabPayloadFromDescription(context.cardId);
+      setHasLegacyDescriptionBackup(false);
+      setSyncStatus('synced');
+      setMessage('Description nettoyée.');
+    } catch (error) {
+      setSyncStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Nettoyage impossible.');
+    }
+  };
+
+  return (
+    <main className="card-section-shell">
+      <section className="card-section-card">
+        <div className="card-section-top">
+          <div className="brand-row compact-brand">
+            <div className="brand-mark compact-mark"><FlaskConical size={19} /></div>
+            <div>
+              <p className="eyebrow">Lab Reactor</p>
+              <h1>Fiche parascolaire</h1>
+            </div>
+          </div>
+          <div className={`sync-pill compact ${syncStatus}`}><span />{labelForSync(syncStatus)}</div>
+        </div>
+
+        <div className="card-section-main">
+          <div className="score-ring compact-ring" style={{ '--score': validation.score } as CSSProperties}>
+            <strong>{validation.score}%</strong>
+            <span>{validation.status}</span>
+          </div>
+          <dl>
+            <dt>École</dt><dd>{valueOrDash(state.sef_school_name)}</dd>
+            <dt>Contact</dt><dd>{valueOrDash(state.sef_contact_name)}</dd>
+            <dt>Sessions</dt><dd>{pricedSessionCount || '-'}</dd>
+            <dt>Total</dt><dd>{totalSessionPrice.toFixed(2)} $</dd>
+          </dl>
+        </div>
+
+        <div className="card-section-actions">
+          <button type="button" className="primary-action" onClick={openFullPanel}>
+            <FlaskConical size={17} />Ouvrir la fiche
+          </button>
+          {hasLegacyDescriptionBackup && (
+            <button type="button" onClick={cleanupDescriptionBackup}>
+              <Trash2 size={16} />Nettoyer description
+            </button>
+          )}
+        </div>
+        <p className="card-section-message">{message}</p>
+      </section>
     </main>
   );
 }
@@ -871,6 +1006,18 @@ function FieldInput({ field, value, onChange }: { field: FieldDefinition; value:
       )}
     </label>
   );
+}
+
+function isCardSectionRoute(): boolean {
+  return new URLSearchParams(window.location.search).get('view') === 'card-section';
+}
+
+function buildLabPanelUrl(context: TrelloContext): string {
+  const params = new URLSearchParams({ panel: 'lab', v: LAB_REACTOR_CACHE_VERSION });
+  if (context.boardId) params.set('boardId', context.boardId);
+  if (context.cardId) params.set('cardId', context.cardId);
+  if (context.cardName) params.set('cardName', context.cardName);
+  return `./lab.html?${params.toString()}`;
 }
 
 function chooseBestSavedState(sources: SavedStateSource[]): { label: string; state: LabState } | null {
@@ -1030,6 +1177,41 @@ async function readPowerUpSnapshot(): Promise<PowerUpSnapshot | null> {
     fields: Array.isArray(board.customFields) ? board.customFields : [],
     items: Array.isArray(card.customFieldItems) ? card.customFieldItems : [],
     desc: typeof card.desc === 'string' ? card.desc : null,
+  };
+}
+
+async function loadSavedCardState(boardId: string, cardId: string): Promise<LoadedCardState> {
+  const snapshot = await readPowerUpSnapshot().catch(() => null);
+  const fields = snapshot?.fields.length ? snapshot.fields : await getBoardCustomFields(boardId).catch(() => []);
+  const mapping = buildFieldMapping(fields);
+  const items = snapshot?.items.length ? snapshot.items : fields.length ? await getCardCustomFieldItems(cardId).catch(() => []) : [];
+  const visibleState = readVisibleCustomFieldState(fields, items);
+  const visibleStateLayer = visibleState ? projectTrelloStateToExistingFields(visibleState, fields) : null;
+  const descriptionSource = snapshot?.desc !== null && snapshot?.desc !== undefined
+    ? readDescriptionBackupFromText(snapshot.desc)
+    : await readDescriptionBackup(cardId).catch(() => null);
+  const powerUpSource = await readPowerUpSharedBackup(cardId).catch(() => null);
+  const payloadSource = readPayloadBackupFromItems(fields, items);
+  const payloadFieldSource = payloadSource
+    ? null
+    : await readPayloadBackupFromField(boardId, cardId).catch(() => null);
+  const localDraftSource = readLocalDraft(boardId, cardId);
+  const durableSources: SavedStateSource[] = [
+    powerUpSource ?? { label: 'données Power-Up Trello', state: null },
+    descriptionSource ?? { label: 'description Trello', state: null },
+    payloadSource ?? payloadFieldSource ?? { label: 'payload Trello', state: null },
+    localDraftSource ?? { label: 'brouillon local', state: null },
+  ];
+  const bestSource = chooseBestSavedState(durableSources);
+  const baseState = bestSource?.state ?? createEmptyLabState({ sef_session_name: 'Session 1', sef_status: 'Brouillon' });
+  const visibleStatePatch = bestSource ? pickMissingStateKeys(visibleStateLayer, baseState) : visibleStateLayer;
+
+  return {
+    state: mergeLabStateLayers(baseState, visibleStatePatch),
+    mapping,
+    sourceLabel: bestSource?.label ?? null,
+    hasVisibleState: Boolean(visibleStateLayer),
+    hasDescriptionBackup: Boolean(descriptionSource?.state && powerUpSource?.state),
   };
 }
 

@@ -6,6 +6,7 @@ import './styles.css';
 const API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
 const API_BASE = 'https://api.trello.com/1';
 const ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
+const CACHE_VERSION = 'lab-reactor-20260709-card-section1';
 const isPanel = new URLSearchParams(window.location.search).get('panel') === 'lab';
 type TrelloModalContext = {
   alert?: (options: Record<string, unknown>) => Promise<void>;
@@ -26,15 +27,16 @@ function getSignedUrl(t: { signUrl?: (url: string) => string }, url: string) {
   return t.signUrl ? t.signUrl(url) : url;
 }
 
-async function getPanelUrlWithContext(t: TrelloModalContext) {
+async function getPanelUrlWithContext(t: TrelloModalContext, options: { view?: 'card-section' } = {}) {
   const [board, card] = await Promise.all([
     t.board('id').catch(() => null),
     t.card ? t.card('id', 'name').catch(() => null) : Promise.resolve(null),
   ]);
-  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-save-fix1' });
+  const params = new URLSearchParams({ panel: 'lab', v: CACHE_VERSION });
   if (board?.id) params.set('boardId', board.id);
   if (card?.id) params.set('cardId', card.id);
   if (card?.name) params.set('cardName', card.name);
+  if (options.view) params.set('view', options.view);
   return `./lab.html?${params.toString()}`;
 }
 
@@ -97,7 +99,7 @@ async function createLabCard(t: TrelloModalContext) {
       },
     });
 
-    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-save-fix1`;
+    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=${CACHE_VERSION}`;
     await t.modal({
       title: 'Lab Reactor',
       url: getSignedUrl(t, url),
@@ -113,7 +115,7 @@ async function openBoardCreatePanel(t: TrelloModalContext) {
   try {
     const board = await t.board('id');
     const boardId = board.id ?? '';
-    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-save-fix1`;
+    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=${CACHE_VERSION}`;
     await t.modal({
       title: 'Créer fiche Lab Reactor',
       url: getSignedUrl(t, url),
@@ -142,14 +144,14 @@ if (window.TrelloPowerUp && !isPanel) {
       },
     ],
     'card-back-section': async (t: TrelloModalContext) => {
-      const url = await getPanelUrlWithContext(t);
+      const url = await getPanelUrlWithContext(t, { view: 'card-section' });
       return {
         title: 'Lab Reactor',
         icon: ICON_URL,
         content: {
           type: 'iframe',
           url: getSignedUrl(t, url),
-          height: 760,
+          height: 210,
         },
         action: {
           text: 'Ouvrir en grand',
