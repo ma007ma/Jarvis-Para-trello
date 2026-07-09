@@ -10,7 +10,7 @@ import {
   RefreshCcw,
   Zap,
 } from 'lucide-react';
-import { FIELD_BY_KEY, FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
+import { FIELD_BY_KEY, VISIBLE_TRELLO_FIELD_REGISTRY, type FieldDefinition, type FieldKey } from './config/fieldRegistry';
 import { createEmptyLabState, type LabState, type LabValue } from './domain/labState';
 import {
   generateSchoolCalendarMonths,
@@ -32,8 +32,10 @@ import {
   getCardCustomFieldItems,
   mapLabStateToTrelloPayload,
   mapTrelloToLabState,
+  readLabPayloadFromDescription,
   readLabPayloadField,
   updateCardCustomFields,
+  writeLabPayloadToDescription,
   writeLabPayloadField,
   type FieldMapping,
 } from './trello/customFieldsClient';
@@ -41,7 +43,7 @@ import { buildSummary } from './utils/exporters';
 
 const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
-const REQUIRED_MAPPING_COUNT = FIELD_REGISTRY.length;
+const REQUIRED_MAPPING_COUNT = VISIBLE_TRELLO_FIELD_REGISTRY.length;
 const PLUGIN_DATA_KEY = 'labReactorState';
 const FORCE_VISIBLE_FIELD_SYNC = true;
 const TRELLO_IFRAME_OPTIONS = {
@@ -191,6 +193,20 @@ export default function App() {
         return;
       }
 
+      const descriptionState = await readDescriptionBackup(nextContext.cardId);
+      if (descriptionState) {
+        isApplyingRemote.current = true;
+        setState(descriptionState);
+        setActiveSession(getActiveSessionNumber(descriptionState));
+        setSyncStatus('synced');
+        setMessage('Fiche chargée depuis la description Trello.');
+        setDidLoad(true);
+        window.setTimeout(() => {
+          isApplyingRemote.current = false;
+        }, 0);
+        return;
+      }
+
       const ensureResult = await ensureCustomFields(nextContext.boardId);
       const fields = await getBoardCustomFields(nextContext.boardId);
       const nextMapping = Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
@@ -232,34 +248,29 @@ export default function App() {
       setSyncStatus('saving');
       setMessage('Sauvegarde dans Trello...');
       try {
+        await saveDurableState(context.boardId, context.cardId, stateToSave);
+
         let activeMapping = mapping;
         if (Object.keys(activeMapping).length < REQUIRED_MAPPING_COUNT) {
           const ensureResult = await ensureCustomFields(context.boardId);
           activeMapping = ensureResult.mapping;
           setMapping(activeMapping);
-          if (ensureResult.errors.length) {
-            throw new Error(`Impossible de préparer tous les champs Trello: ${ensureResult.errors.slice(0, 2).join(' | ')}`);
-          }
         }
 
-        await saveDurableState(context.boardId, context.cardId, stateToSave);
-
-        if (Object.keys(activeMapping).length >= REQUIRED_MAPPING_COUNT) {
+        if (Object.keys(activeMapping).length) {
           const visibleState = FORCE_VISIBLE_FIELD_SYNC ? { ...stateToSave, sef_sync_hash: null } : stateToSave;
           const payload = mapLabStateToTrelloPayload(visibleState, activeMapping);
           if (payload.length) {
-            await updateCardCustomFields(context.cardId, payload);
+            await updateCardCustomFields(context.cardId, payload).catch(() => undefined);
             setState((current) => ({
               ...current,
               sef_sync_hash: payload.find((item) => item.fieldKey === 'sef_sync_hash')?.value?.text ?? current.sef_sync_hash,
             }));
           }
-        } else {
-          throw new Error('Champs personnalisés Trello incomplets. La sauvegarde visible sur la carte est impossible.');
         }
 
         setSyncStatus('synced');
-        setMessage('Synchronisé dans la carte Trello.');
+        setMessage(Object.keys(activeMapping).length >= REQUIRED_MAPPING_COUNT ? 'Sauvegardé dans Lab Reactor et champs Trello.' : 'Sauvegardé dans Lab Reactor. Champs Trello partiels.');
       } catch (error) {
         setSyncStatus('error');
         setMessage(error instanceof Error ? error.message : 'Erreur de sauvegarde.');
@@ -280,22 +291,19 @@ export default function App() {
     try {
       const cardName = state.sef_school_name ? `Lab Reactor - ${state.sef_school_name}` : 'Nouvelle fiche Lab Reactor';
       const card = await createLabCardOnBoard(context.boardId, cardName, 'Fiche créée depuis le Power-Up Lab Reactor.');
-      const ensureResult = await ensureCustomFields(context.boardId);
-      if (ensureResult.errors.length) {
-        throw new Error(`Carte créée, mais champs Trello incomplets: ${ensureResult.errors.slice(0, 2).join(' | ')}`);
-      }
-
       await saveDurableState(context.boardId, card.id, state);
+
+      const ensureResult = await ensureCustomFields(context.boardId);
       const visibleState = { ...state, sef_sync_hash: null };
       const payload = mapLabStateToTrelloPayload(visibleState, ensureResult.mapping);
       if (payload.length) {
-        await updateCardCustomFields(card.id, payload);
+        await updateCardCustomFields(card.id, payload).catch(() => undefined);
       }
 
       setContext({ boardId: context.boardId, cardId: card.id, cardName: card.name });
       setMapping(ensureResult.mapping);
       setSyncStatus('synced');
-      setMessage('Carte créée et champs personnalisés sauvegardés dans Trello.');
+      setMessage(ensureResult.errors.length ? 'Carte créée et fiche sauvegardée. Certains champs Trello visibles sont partiels.' : 'Carte créée et fiche sauvegardée dans Lab Reactor/Trello.');
     } catch (error) {
       setSyncStatus('error');
       setMessage(error instanceof Error ? error.message : 'Erreur pendant la création de la carte Trello.');
@@ -830,6 +838,15 @@ async function readPayloadBackup(boardId: string, cardId: string): Promise<LabSt
   }
 }
 
+async function readDescriptionBackup(cardId: string): Promise<LabState | null> {
+  try {
+    const value = await readLabPayloadFromDescription(cardId);
+    return parseSavedState(value);
+  } catch {
+    return null;
+  }
+}
+
 async function saveDurableState(boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
   const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   const serialized = JSON.stringify(stateToSave);
@@ -840,6 +857,7 @@ async function saveDurableState(boardId: string, cardId: string, stateToSave: La
   }
 
   writes.push(writeLabPayloadField(boardId, cardId, serialized));
+  writes.push(writeLabPayloadToDescription(cardId, serialized));
   const results = await Promise.allSettled(writes);
   if (results.every((result) => result.status === 'rejected')) {
     const firstError = results.find((result): result is PromiseRejectedResult => result.status === 'rejected')?.reason;

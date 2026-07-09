@@ -133,6 +133,44 @@ export const TECHNICAL_FIELD_KEYS: readonly FieldKey[] = [
   'sef_lab_reactor_version',
 ];
 
+export const VISIBLE_TRELLO_FIELD_KEYS: readonly FieldKey[] = [
+  'sef_school_name',
+  'sef_css',
+  'sef_school_year',
+  'sef_contact_name',
+  'sef_contact_email',
+  'sef_contact_phone',
+  'sef_season',
+  'sef_session_name',
+  'sef_status',
+  'sef_program',
+  'sef_group_target',
+  'sef_grade_range',
+  'sef_day_of_week',
+  'sef_start_time',
+  'sef_end_time',
+  'sef_room',
+  'sef_weeks',
+  'sef_s1_theme',
+  'sef_s1_price',
+  'sef_s2_theme',
+  'sef_s2_price',
+  'sef_s3_theme',
+  'sef_s3_price',
+  'sef_s4_theme',
+  'sef_s4_price',
+  'sef_s1_course_dates',
+  'sef_s2_course_dates',
+  'sef_s3_course_dates',
+  'sef_s4_course_dates',
+  'sef_validation_score',
+  'sef_validation_status',
+  'sef_last_synced_at',
+  'sef_lab_reactor_version',
+] as const;
+
+export const VISIBLE_TRELLO_FIELD_REGISTRY = FIELD_REGISTRY.filter((field) => VISIBLE_TRELLO_FIELD_KEYS.includes(field.key as FieldKey));
+
 export function getFieldsBySection(section: FieldSection): FieldDefinition[] {
   return FIELD_REGISTRY.filter((field) => field.section === section);
 }

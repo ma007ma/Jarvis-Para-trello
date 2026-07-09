@@ -1,4 +1,11 @@
-import { FIELD_BY_TRELLO_NAME, FIELD_REGISTRY, TECHNICAL_FIELD_KEYS, type FieldDefinition, type FieldKey } from '../config/fieldRegistry';
+import {
+  FIELD_BY_TRELLO_NAME,
+  FIELD_REGISTRY,
+  TECHNICAL_FIELD_KEYS,
+  VISIBLE_TRELLO_FIELD_REGISTRY,
+  type FieldDefinition,
+  type FieldKey,
+} from '../config/fieldRegistry';
 import { createEmptyLabState, isEmptyLabValue, type LabState, type LabValue } from '../domain/labState';
 
 export interface TrelloCustomFieldOption {
@@ -63,11 +70,14 @@ export interface TrelloList {
 export interface TrelloCard {
   id: string;
   name: string;
+  desc?: string;
   url?: string;
   shortUrl?: string;
 }
 
 export const LAB_REACTOR_PAYLOAD_FIELD_NAME = 'Lab Reactor payload';
+const DESCRIPTION_PAYLOAD_START = '<!-- LAB_REACTOR_PAYLOAD_START';
+const DESCRIPTION_PAYLOAD_END = 'LAB_REACTOR_PAYLOAD_END -->';
 
 interface ClientOptions {
   apiKey?: string;
@@ -137,7 +147,7 @@ export class TrelloCustomFieldsClient {
     });
   }
 
-  async ensureCustomFields(boardId: string): Promise<EnsureCustomFieldsResult> {
+  async ensureCustomFields(boardId: string, definitions: readonly FieldDefinition[] = VISIBLE_TRELLO_FIELD_REGISTRY): Promise<EnsureCustomFieldsResult> {
     const result: EnsureCustomFieldsResult = {
       created: [],
       present: [],
@@ -148,7 +158,7 @@ export class TrelloCustomFieldsClient {
 
     let existing = await this.getBoardCustomFields(boardId);
 
-    for (const definition of FIELD_REGISTRY) {
+    for (const definition of definitions) {
       try {
         let field = existing.find((candidate) => candidate.name === definition.trelloName);
 
@@ -184,7 +194,7 @@ export class TrelloCustomFieldsClient {
           }
         }
 
-        result.mapping[definition.key] = toMappingEntry(definition, field);
+        result.mapping[definition.key as FieldKey] = toMappingEntry(definition, field);
       } catch (error) {
         result.errors.push(`${definition.trelloName}: ${error instanceof Error ? error.message : String(error)}`);
       }
@@ -218,6 +228,19 @@ export class TrelloCustomFieldsClient {
     return this.request<TrelloCard>('/cards', {
       method: 'POST',
       query: { idList, name, desc },
+    });
+  }
+
+  async getCard(cardId: string): Promise<TrelloCard> {
+    return this.request<TrelloCard>(`/cards/${cardId}`, {
+      query: { fields: 'id,name,desc,url,shortUrl' },
+    });
+  }
+
+  async updateCardDescription(cardId: string, desc: string): Promise<void> {
+    await this.request<void>(`/cards/${cardId}`, {
+      method: 'PUT',
+      query: { desc },
     });
   }
 
@@ -379,6 +402,48 @@ export async function createLabCardOnBoard(boardId: string, name: string, desc: 
   const lists = await client.getOpenLists(boardId);
   if (!lists.length) throw new Error('Aucune liste ouverte trouvée sur ce tableau.');
   return client.createCard(lists[0].id, name, desc);
+}
+
+export async function readLabPayloadFromDescription(cardId: string): Promise<string | null> {
+  const card = await new TrelloCustomFieldsClient().getCard(cardId);
+  return extractDescriptionPayload(card.desc ?? '');
+}
+
+export async function writeLabPayloadToDescription(cardId: string, value: string): Promise<void> {
+  const client = new TrelloCustomFieldsClient();
+  const card = await client.getCard(cardId);
+  await client.updateCardDescription(cardId, upsertDescriptionPayload(card.desc ?? '', value));
+}
+
+function extractDescriptionPayload(desc: string): string | null {
+  const start = desc.indexOf(DESCRIPTION_PAYLOAD_START);
+  if (start === -1) return null;
+  const payloadStart = desc.indexOf('\n', start);
+  const end = desc.indexOf(DESCRIPTION_PAYLOAD_END, payloadStart);
+  if (payloadStart === -1 || end === -1) return null;
+  const encoded = desc.slice(payloadStart + 1, end).trim();
+  try {
+    return decodeURIComponent(escape(atob(encoded)));
+  } catch {
+    return null;
+  }
+}
+
+function upsertDescriptionPayload(desc: string, value: string): string {
+  const encoded = btoa(unescape(encodeURIComponent(value)));
+  const block = `${DESCRIPTION_PAYLOAD_START}\n${encoded}\n${DESCRIPTION_PAYLOAD_END}`;
+  const start = desc.indexOf(DESCRIPTION_PAYLOAD_START);
+  if (start === -1) {
+    return `${desc.trimEnd()}\n\n${block}`.trim();
+  }
+
+  const end = desc.indexOf(DESCRIPTION_PAYLOAD_END, start);
+  if (end === -1) {
+    return `${desc.trimEnd()}\n\n${block}`.trim();
+  }
+
+  const afterEnd = end + DESCRIPTION_PAYLOAD_END.length;
+  return `${desc.slice(0, start).trimEnd()}\n\n${block}\n\n${desc.slice(afterEnd).trimStart()}`.trim();
 }
 
 function readItemValue(definition: FieldDefinition, field: TrelloCustomField, item?: TrelloCustomFieldItem): LabValue {
