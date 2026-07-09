@@ -19,7 +19,7 @@ declare global {
 
 export interface TrelloPowerUpFactory {
   initialize(capabilities: Record<string, unknown>, options?: Record<string, unknown>): void;
-  iframe(): TrelloIframe;
+  iframe(options?: { appKey?: string; appName?: string }): TrelloIframe;
 }
 
 export interface TrelloIframe {

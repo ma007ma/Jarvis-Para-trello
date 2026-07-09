@@ -77,6 +77,10 @@ interface ClientOptions {
 }
 
 const DEFAULT_API_BASE = import.meta.env.VITE_TRELLO_API_BASE || 'https://api.trello.com/1';
+const TRELLO_IFRAME_OPTIONS = {
+  appKey: import.meta.env.VITE_TRELLO_API_KEY ?? 'a9936eee9f445b63329fe1ab29b41e1f',
+  appName: 'Lab Reactor',
+};
 
 export class TrelloCustomFieldsClient {
   private readonly apiKey?: string;
@@ -251,7 +255,8 @@ export class TrelloCustomFieldsClient {
 }
 
 export async function getPowerUpToken(): Promise<string | null> {
-  const restApi = window.TrelloPowerUp?.iframe?.().getRestApi?.();
+  const iframe = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+  const restApi = iframe?.getRestApi?.();
   if (!restApi) {
     return null;
   }

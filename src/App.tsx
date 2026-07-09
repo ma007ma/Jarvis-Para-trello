@@ -44,6 +44,10 @@ const POLL_INTERVAL_MS = 8000;
 const REQUIRED_MAPPING_COUNT = FIELD_REGISTRY.length;
 const PLUGIN_DATA_KEY = 'labReactorState';
 const FORCE_VISIBLE_FIELD_SYNC = true;
+const TRELLO_IFRAME_OPTIONS = {
+  appKey: import.meta.env.VITE_TRELLO_API_KEY ?? 'a9936eee9f445b63329fe1ab29b41e1f',
+  appName: 'Lab Reactor',
+};
 const QUICK_FIELD_COLUMNS: FieldKey[][] = [
   ['sef_contact_name', 'sef_contact_phone', 'sef_contact_email', 'sef_program'],
   ['sef_start_time', 'sef_end_time', 'sef_room'],
@@ -788,7 +792,7 @@ async function readTrelloContext(): Promise<TrelloContext> {
     return { boardId: paramBoardId, cardId: paramCardId, cardName: paramCardName ?? 'Carte Lab Reactor' };
   }
 
-  const t = window.TrelloPowerUp?.iframe?.();
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
   try {
     const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
@@ -807,7 +811,7 @@ async function readTrelloContext(): Promise<TrelloContext> {
 }
 
 async function readPluginDataState(): Promise<LabState | null> {
-  const t = window.TrelloPowerUp?.iframe?.();
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   if (!t?.get) return null;
   try {
     const value = await t.get('card', 'shared', PLUGIN_DATA_KEY, null);
@@ -827,7 +831,7 @@ async function readPayloadBackup(boardId: string, cardId: string): Promise<LabSt
 }
 
 async function saveDurableState(boardId: string, cardId: string, stateToSave: LabState): Promise<void> {
-  const t = window.TrelloPowerUp?.iframe?.();
+  const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
   const serialized = JSON.stringify(stateToSave);
   const writes: Array<Promise<unknown>> = [];
 
