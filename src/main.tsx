@@ -3,7 +3,7 @@ import ReactDOM from 'react-dom/client';
 import App from './App';
 import './styles.css';
 
-const POWER_UP_URL = './index.html?panel=lab&v=lab-reactor-card-view';
+const POWER_UP_URL = './lab.html?panel=lab&v=lab-reactor-card-view';
 const isPanel = new URLSearchParams(window.location.search).get('panel') === 'lab';
 type TrelloModalContext = { modal: (options: Record<string, unknown>) => Promise<void>; signUrl?: (url: string) => string };
 

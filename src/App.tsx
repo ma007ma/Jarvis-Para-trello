@@ -63,6 +63,16 @@ const PRIORITY_FIELD_KEYS: FieldKey[] = [
 
 type SyncStatus = 'idle' | 'loading' | 'saving' | 'synced' | 'error';
 type DateTarget = { kind: 'field'; id: string; key: FieldKey } | { kind: 'course'; id: string; session: SessionNumber; index: number };
+type TabId = 'general' | 'sessions' | 'offers' | 'pricing' | 'dates' | 'summary';
+
+const TABS: Array<{ id: TabId; label: string }> = [
+  { id: 'general', label: 'Informations générales' },
+  { id: 'sessions', label: 'Programme & sessions' },
+  { id: 'offers', label: 'Offres combinées' },
+  { id: 'pricing', label: 'Inscriptions & prix' },
+  { id: 'dates', label: 'Dates importantes' },
+  { id: 'summary', label: 'Résumé & validation' },
+];
 
 interface TrelloContext {
   boardId: string | null;
@@ -80,6 +90,11 @@ export default function App() {
   const [activeSession, setActiveSession] = useState<SessionNumber>(1);
   const [selectedDateTarget, setSelectedDateTarget] = useState<DateTarget | null>(null);
   const [courseSlots, setCourseSlots] = useState<Record<SessionNumber, number>>({ 1: 4, 2: 4, 3: 4, 4: 4 });
+  const [activeTab, setActiveTab] = useState<TabId>('general');
+  const [combinedOffers, setCombinedOffers] = useState([
+    { name: 'Automne + hiver', sessions: 'Session 1 + Session 2', price: 340, notes: 'Prix manuel à valider.' },
+    { name: 'Année complète', sessions: 'Session 1 + Session 2 + Session 3 + Session 4', price: 680, notes: 'Rabais appliqué au besoin.' },
+  ]);
   const saveTimer = useRef<number | null>(null);
   const isApplyingRemote = useRef(false);
 
@@ -108,6 +123,23 @@ export default function App() {
     return Math.round((filled / PRIORITY_FIELD_KEYS.length) * 100);
   }, [state]);
   const hasTrelloContext = Boolean(context.boardId && context.cardId);
+  const sessionPrices = SESSION_NUMBERS.map((session) => Number(state[`sef_s${session}_price` as FieldKey]) || 0);
+  const totalSessionPrice = sessionPrices.reduce((sum, price) => sum + price, 0);
+  const makePayload = {
+    source: 'lab-reactor',
+    cardId: context.cardId,
+    boardId: context.boardId,
+    school: state.sef_school_name,
+    civilYear: state.sef_school_year,
+    status: state.sef_status,
+    sessions: SESSION_NUMBERS.map((session) => ({
+      session,
+      theme: state[`sef_s${session}_theme` as FieldKey],
+      price: state[`sef_s${session}_price` as FieldKey],
+      courseDates: readCourseDates(state, session),
+    })),
+    combinedOffers,
+  };
 
   const loadFromTrello = useCallback(async () => {
     const nextContext = await readTrelloContext();
@@ -267,169 +299,267 @@ export default function App() {
   };
 
   return (
-    <main className="app-shell">
-      <header className="app-header">
+    <main className="lab-shell">
+      <header className="lab-topbar">
         <div className="brand-row">
           <div className="brand-mark"><FlaskConical size={24} /></div>
           <div>
-            <p className="eyebrow">Sciences en Folie</p>
-            <h1>Lab Reactor</h1>
-            <p className="hero-copy">{context.cardName}</p>
+            <p className="eyebrow">Lab Reactor</p>
+            <h1>Fiche de proposition parascolaire</h1>
+            <p className="hero-copy">{valueOrDash(state.sef_school_name)} · {valueOrDash(state.sef_season)} {valueOrDash(state.sef_school_year)} · {valueOrDash(state.sef_program)}</p>
           </div>
         </div>
         <div className="header-metrics">
-          <div className="metric-pill"><Zap size={16} />{priorityCompletion}% fiche</div>
+          <span>Dernière sauvegarde: auto</span>
           <div className={`sync-pill ${syncStatus}`}><span />{labelForSync(syncStatus)}</div>
         </div>
       </header>
 
-      <section className="quick-sheet" aria-label="Fiche rapide">
-        <div className="section-heading">
-          <div>
-            <p className="eyebrow">Saisie rapide</p>
-            <h2>Les champs qui comptent</h2>
-          </div>
-          <strong>{valueOrDash(state.sef_school_year)} · {valueOrDash(state.sef_status)}</strong>
-        </div>
-        <div className="quick-columns">
-          {QUICK_FIELD_COLUMNS.map((column, index) => (
-            <div className="quick-column" key={index}>
-              {column.map((key) => <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />)}
+      <div className="lab-layout">
+        <aside className="lab-nav" aria-label="Navigation Lab Reactor">
+          <div className="completion-card">
+            <div className="score-ring" style={{ '--score': validation.score } as CSSProperties}>
+              <strong>{validation.score}%</strong>
+              <span>{validation.status}</span>
             </div>
+            <p>{priorityCompletion}% des champs rapides remplis</p>
+          </div>
+          {TABS.map((tab) => (
+            <button key={tab.id} type="button" className={activeTab === tab.id ? 'active' : ''} onClick={() => setActiveTab(tab.id)}>
+              {tab.label}
+            </button>
           ))}
-        </div>
-        <div className="quick-extra">
-          {EXTRA_QUICK_FIELDS.map((key) =>
-            key === 'sef_school_year' ? (
-              <YearSelect key={key} value={state[key]} onChange={(value) => updateField(key, value)} />
-            ) : (
-              <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />
-            ),
+        </aside>
+
+        <section className="lab-content">
+          {activeTab === 'general' && (
+            <section className="panel-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">1. Informations générales</p>
+                  <h2>École, contact et contexte</h2>
+                </div>
+              </div>
+              <div className="quick-columns">
+                {QUICK_FIELD_COLUMNS.map((column, index) => (
+                  <div className="quick-column" key={index}>
+                    {column.map((key) => <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />)}
+                  </div>
+                ))}
+              </div>
+              <div className="quick-extra">
+                {EXTRA_QUICK_FIELDS.map((key) =>
+                  key === 'sef_school_year' ? (
+                    <YearSelect key={key} value={state[key]} onChange={(value) => updateField(key, value)} />
+                  ) : (
+                    <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />
+                  ),
+                )}
+              </div>
+              <div className="wide-field">
+                <FieldInput field={FIELD_BY_KEY.sef_internal_notes} value={state.sef_internal_notes} onChange={(value) => updateField('sef_internal_notes', value)} />
+              </div>
+            </section>
           )}
-        </div>
-      </section>
 
-      <section className="planning-board" aria-label="Dates et calendrier">
-        <div className="planning-sidebar">
-          <div className="section-heading compact">
-            <div>
-              <p className="eyebrow">Dates</p>
-              <h2>Session {activeSession}</h2>
-            </div>
-            <div className="session-tabs">
-              {SESSION_NUMBERS.map((session) => (
-                <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
-                  {session}
+          {activeTab === 'sessions' && (
+            <section className="panel-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">2. Programme & sessions</p>
+                  <h2>Jusqu'à 4 sessions par proposition</h2>
+                </div>
+                <div className="session-tabs">
+                  {SESSION_NUMBERS.map((session) => (
+                    <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
+                      Session {session}
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <div className="session-detail-grid">
+                {SESSION_DETAIL_FIELDS.map((suffix) => {
+                  const key = `sef_s${activeSession}_${suffix}` as FieldKey;
+                  return <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />;
+                })}
+              </div>
+              <div className="course-grid">
+                {Array.from({ length: visibleCourseCount }, (_, index) => {
+                  const courseIndex = index + 1;
+                  return (
+                    <button
+                      key={courseIndex}
+                      type="button"
+                      className={`course-chip ${selectedDateTarget?.kind === 'course' && selectedDateTarget.index === courseIndex ? 'active' : ''}`}
+                      onClick={() => setSelectedDateTarget({ kind: 'course', id: `course_${courseIndex}`, session: activeSession, index: courseIndex })}
+                    >
+                      Cours {courseIndex}<span>{activeCourseDates[index] ?? 'Date à choisir'}</span>
+                    </button>
+                  );
+                })}
+              </div>
+              {visibleCourseCount < 12 && (
+                <button type="button" className="add-course-button" onClick={() => setCourseSlots((current) => ({ ...current, [activeSession]: Math.min(12, current[activeSession] + 1) }))}>
+                  <Plus size={17} />Ajouter cours
                 </button>
-              ))}
-            </div>
-          </div>
-          <div className="selected-step">
-            <MousePointerClick size={18} />
-            <div>
-              <span>Étape active</span>
-              <strong>{selectedMilestone?.label ?? 'Aucune étape'}</strong>
-            </div>
-          </div>
-          <div className="session-detail-grid">
-            {SESSION_DETAIL_FIELDS.map((suffix) => {
-              const key = `sef_s${activeSession}_${suffix}` as FieldKey;
-              return <FieldInput key={key} field={FIELD_BY_KEY[key]} value={state[key]} onChange={(value) => updateField(key, value)} />;
-            })}
-          </div>
-          <div className="milestone-list">
-            {visibleMilestones.map((milestone) => (
-              <button
-                key={milestone.id}
-                type="button"
-                className={`milestone-row ${milestone.tone} ${selectedMilestone?.id === milestone.id ? 'selected' : ''}`}
-                onClick={() => setSelectedDateTarget(toDateTarget(milestone, activeSession))}
-              >
-                <span className="milestone-tone" />
-                <strong>{milestone.label}</strong>
-                <span>{milestone.date ?? '--'}</span>
-                <em>{milestone.status}</em>
-              </button>
-            ))}
-            {visibleCourseCount < 12 && (
-              <button
-                type="button"
-                className="add-course-button"
-                onClick={() => setCourseSlots((current) => ({ ...current, [activeSession]: Math.min(12, current[activeSession] + 1) }))}
-              >
-                <Plus size={17} />Ajouter cours
-              </button>
-            )}
-          </div>
-        </div>
-        <div className="calendar-section">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Calendrier</p>
-              <h2>{valueOrDash(state.sef_school_year)}</h2>
-            </div>
-            <CalendarDays size={22} />
-          </div>
-          <div className="calendar-legend">
-            {(['purple', 'red', 'blue', 'yellow', 'gray', 'green', 'orange'] as MilestoneTone[]).map((tone) => <span key={tone} className={`legend-dot ${tone}`}>{toneLabel(tone)}</span>)}
-          </div>
-          <div className="calendar-grid">
-            {calendarMonths.map((month) => (
-              <MiniCalendar
-                key={`${month.year}-${month.month}`}
-                month={month}
-                dates={milestoneDates}
-                selectedDate={selectedMilestone?.date ?? null}
-                selectedTone={selectedMilestone?.tone ?? 'blue'}
-                onDateSelect={updateSelectedMilestoneDate}
-              />
-            ))}
-          </div>
-        </div>
-      </section>
+              )}
+            </section>
+          )}
 
-      <section className="validation-actions-grid">
-        <section className="validation-panel" aria-label="Validation opérationnelle">
-          <div className="score-ring" style={{ '--score': validation.score } as CSSProperties}>
-            <strong>{validation.score}%</strong>
-            <span>{validation.status}</span>
-          </div>
-          <div>
-            <p className="eyebrow">Section 4</p>
-            <h2>Validation opérationnelle</h2>
-            <p>{validation.alerts.length ? `${validation.alerts.length} alerte(s) à régler.` : 'La carte est prête à présenter.'}</p>
-          </div>
-          {validation.alerts.length > 0 && (
-            <div className="alerts">
-              {validation.alerts.map((alert) => <div key={alert.message} className={`alert ${alert.level}`}><AlertTriangle size={17} />{alert.message}</div>)}
-            </div>
+          {activeTab === 'offers' && (
+            <section className="panel-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">3. Offres combinées</p>
+                  <h2>Prix manuels, aucun calcul automatique</h2>
+                </div>
+              </div>
+              <div className="offer-table">
+                {combinedOffers.map((offer, index) => (
+                  <div className="offer-row" key={index}>
+                    <input value={offer.name} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, name: event.target.value } : item))} />
+                    <input value={offer.sessions} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, sessions: event.target.value } : item))} />
+                    <input type="number" value={offer.price} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, price: Number(event.target.value) } : item))} />
+                    <input value={offer.notes} onChange={(event) => setCombinedOffers((offers) => offers.map((item, itemIndex) => itemIndex === index ? { ...item, notes: event.target.value } : item))} />
+                  </div>
+                ))}
+              </div>
+              <button type="button" className="add-course-button" onClick={() => setCombinedOffers((offers) => [...offers, { name: 'Nouvelle offre', sessions: 'Session 1', price: 0, notes: '' }])}>
+                <Plus size={17} />Ajouter une offre
+              </button>
+            </section>
+          )}
+
+          {activeTab === 'pricing' && (
+            <section className="panel-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">4. Inscriptions & prix</p>
+                  <h2>Prix saisis manuellement</h2>
+                </div>
+              </div>
+              <div className="price-grid">
+                {SESSION_NUMBERS.map((session) => {
+                  const themeKey = `sef_s${session}_theme` as FieldKey;
+                  const priceKey = `sef_s${session}_price` as FieldKey;
+                  return (
+                    <div className="price-card" key={session}>
+                      <h3>Session {session}</h3>
+                      <FieldInput field={FIELD_BY_KEY[themeKey]} value={state[themeKey]} onChange={(value) => updateField(themeKey, value)} />
+                      <FieldInput field={FIELD_BY_KEY[priceKey]} value={state[priceKey]} onChange={(value) => updateField(priceKey, value)} />
+                    </div>
+                  );
+                })}
+              </div>
+            </section>
+          )}
+
+          {activeTab === 'dates' && (
+            <section className="planning-board" aria-label="Dates et calendrier">
+              <div className="planning-sidebar">
+                <div className="section-heading compact">
+                  <div>
+                    <p className="eyebrow">5. Dates importantes</p>
+                    <h2>Session {activeSession}</h2>
+                  </div>
+                  <div className="session-tabs">
+                    {SESSION_NUMBERS.map((session) => (
+                      <button key={session} type="button" className={activeSession === session ? 'active' : ''} onClick={() => setActiveSession(session)}>
+                        {session}
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <div className="selected-step">
+                  <MousePointerClick size={18} />
+                  <div>
+                    <span>Étape active</span>
+                    <strong>{selectedMilestone?.label ?? 'Aucune étape'}</strong>
+                  </div>
+                </div>
+                <div className="milestone-list">
+                  {visibleMilestones.map((milestone) => (
+                    <button
+                      key={milestone.id}
+                      type="button"
+                      className={`milestone-row ${milestone.tone} ${selectedMilestone?.id === milestone.id ? 'selected' : ''}`}
+                      onClick={() => setSelectedDateTarget(toDateTarget(milestone, activeSession))}
+                    >
+                      <span className="milestone-tone" />
+                      <strong>{milestone.label}</strong>
+                      <span>{milestone.date ?? '--'}</span>
+                      <em>{milestone.status}</em>
+                    </button>
+                  ))}
+                </div>
+              </div>
+              <CalendarPanel
+                calendarMonths={calendarMonths}
+                milestoneDates={milestoneDates}
+                selectedMilestone={selectedMilestone}
+                onDateSelect={updateSelectedMilestoneDate}
+                yearLabel={valueOrDash(state.sef_school_year)}
+              />
+            </section>
+          )}
+
+          {activeTab === 'summary' && (
+            <section className="panel-card">
+              <div className="section-heading">
+                <div>
+                  <p className="eyebrow">6. Résumé & validation</p>
+                  <h2>{validation.status}</h2>
+                </div>
+                <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
+              </div>
+              <section className="validation-panel" aria-label="Validation opérationnelle">
+                <div className="score-ring" style={{ '--score': validation.score } as CSSProperties}>
+                  <strong>{validation.score}%</strong>
+                  <span>{validation.status}</span>
+                </div>
+                <div>
+                  <p>{validation.alerts.length ? `${validation.alerts.length} alerte(s) à régler.` : 'La proposition est prête à présenter.'}</p>
+                </div>
+                {validation.alerts.length > 0 && (
+                  <div className="alerts">
+                    {validation.alerts.map((alert) => <div key={alert.message} className={`alert ${alert.level}`}><AlertTriangle size={17} />{alert.message}</div>)}
+                  </div>
+                )}
+              </section>
+              <div className="summary-panel embedded">
+                <pre>{buildSummary(state)}</pre>
+              </div>
+              <details className="payload-preview">
+                <summary>Payload Make webhook optionnel</summary>
+                <pre>{JSON.stringify(makePayload, null, 2)}</pre>
+              </details>
+            </section>
           )}
         </section>
 
-        <section className="actions-panel" aria-label="Actions rapides">
-          <div className="section-heading">
-            <div>
-              <p className="eyebrow">Trello</p>
-              <h2>Synchro automatique</h2>
-            </div>
-          </div>
-          <p className="status-message"><strong>{message}</strong><span>{hasTrelloContext ? 'Connecté à Trello' : 'Mode local'}</span></p>
+        <aside className="quick-summary-panel">
+          <h2>Résumé rapide</h2>
+          <dl>
+            <dt>École</dt><dd>{valueOrDash(state.sef_school_name)}</dd>
+            <dt>Contact</dt><dd>{valueOrDash(state.sef_contact_name)}</dd>
+            <dt>Sessions</dt><dd>{SESSION_NUMBERS.length}</dd>
+            <dt>Total sessions</dt><dd>{totalSessionPrice.toFixed(2)} $</dd>
+            <dt>Statut</dt><dd>{valueOrDash(state.sef_status)}</dd>
+          </dl>
           <div className="sync-checks">
             <span className={context.cardId ? 'ok' : ''}><CheckCircle2 size={15} />Carte</span>
             <span className={context.boardId ? 'ok' : ''}><CheckCircle2 size={15} />Board</span>
             <span className={Object.keys(mapping).length >= REQUIRED_MAPPING_COUNT ? 'ok' : ''}><CheckCircle2 size={15} />Champs SEF</span>
           </div>
-          <p className="auto-sync-note"><RefreshCcw size={16} />Chaque changement est sauvegardé dans Trello. Les changements faits dans Trello sont relus automatiquement.</p>
-        </section>
-      </section>
+          <p className="auto-sync-note"><RefreshCcw size={16} />{message}</p>
+        </aside>
+      </div>
 
-      <section className="summary-panel">
-        <div className="section-heading">
-          <h2>Résumé exportable</h2>
-          <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
-        </div>
-        <pre>{buildSummary(state)}</pre>
-      </section>
+      <footer className="lab-actionbar">
+        <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
+        <span>Autosave Trello actif. Aucun secret stocké dans le frontend.</span>
+        <strong>{hasTrelloContext ? 'Connecté à Trello' : 'Mode mock/local'}</strong>
+      </footer>
     </main>
   );
 }
@@ -482,6 +612,47 @@ function MiniCalendar({
         </div>
       ))}
     </article>
+  );
+}
+
+function CalendarPanel({
+  calendarMonths,
+  milestoneDates,
+  selectedMilestone,
+  onDateSelect,
+  yearLabel,
+}: {
+  calendarMonths: ReturnType<typeof generateSchoolCalendarMonths>;
+  milestoneDates: Array<{ date: string; tone: MilestoneTone; label: string }>;
+  selectedMilestone: { date: string | null; tone: MilestoneTone } | undefined;
+  onDateSelect: (date: string) => void;
+  yearLabel: string;
+}) {
+  return (
+    <div className="calendar-section">
+      <div className="section-heading">
+        <div>
+          <p className="eyebrow">Calendrier 12 mois</p>
+          <h2>{yearLabel}</h2>
+        </div>
+        <CalendarDays size={22} />
+      </div>
+      <div className="calendar-legend">
+        {(['purple', 'red', 'blue', 'yellow', 'gray', 'green', 'orange'] as MilestoneTone[]).map((tone) => <span key={tone} className={`legend-dot ${tone}`}>{toneLabel(tone)}</span>)}
+      </div>
+      <div className="calendar-grid">
+        {calendarMonths.map((month) => (
+          <MiniCalendar
+            key={`${month.year}-${month.month}`}
+            month={month}
+            dates={milestoneDates}
+            selectedDate={selectedMilestone?.date ?? null}
+            selectedTone={selectedMilestone?.tone ?? 'blue'}
+            onDateSelect={onDateSelect}
+          />
+        ))}
+      </div>
+    </div>
   );
 }
 
