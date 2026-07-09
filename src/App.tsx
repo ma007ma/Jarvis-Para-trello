@@ -876,7 +876,7 @@ async function readTrelloContext(): Promise<TrelloContext> {
   if (!t) return { boardId: null, cardId: null, cardName: 'Carte locale' };
   const signedContext = readSignedContext(t);
   try {
-    const [board, card] = await Promise.all([t.board('id'), t.card('id,name')]);
+    const [board, card] = await Promise.all([t.board('id'), t.card('id', 'name')]);
     const boardData = board as { id?: string };
     const cardData = card as { id?: string; name?: string };
     return {
@@ -913,7 +913,7 @@ async function readPowerUpSnapshot(): Promise<PowerUpSnapshot | null> {
 
   const [boardResult, cardResult] = await Promise.allSettled([
     t.board('customFields'),
-    t.card('desc,customFieldItems'),
+    t.card('desc', 'customFieldItems'),
   ]);
   const board = boardResult.status === 'fulfilled' ? boardResult.value as { customFields?: TrelloCustomField[] } : {};
   const card = cardResult.status === 'fulfilled' ? cardResult.value as { desc?: string; customFieldItems?: TrelloCustomFieldItem[] } : {};

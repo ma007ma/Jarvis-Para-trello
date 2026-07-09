@@ -24,8 +24,8 @@ export interface TrelloPowerUpFactory {
 
 export interface TrelloIframe {
   arg(name: string): string | undefined;
-  board(property?: string): Promise<unknown>;
-  card(property?: string): Promise<unknown>;
+  board(...properties: string[]): Promise<unknown>;
+  card(...properties: string[]): Promise<unknown>;
   closeModal(): Promise<void>;
   getContext?(): unknown;
   getRestApi(): TrelloRestApi | Promise<TrelloRestApi>;

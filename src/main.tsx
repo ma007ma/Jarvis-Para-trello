@@ -10,7 +10,7 @@ const isPanel = new URLSearchParams(window.location.search).get('panel') === 'la
 type TrelloModalContext = {
   alert?: (options: Record<string, unknown>) => Promise<void>;
   board: (fields: string) => Promise<{ id?: string }>;
-  card?: (fields: string) => Promise<{ id?: string; name?: string }>;
+  card?: (...fields: string[]) => Promise<{ id?: string; name?: string }>;
   getRestApi?: () => {
     getToken: () => Promise<string | null>;
     authorize: (options: Record<string, unknown>) => Promise<string | null>;
@@ -29,9 +29,9 @@ function getSignedUrl(t: { signUrl?: (url: string) => string }, url: string) {
 async function getPanelUrlWithContext(t: TrelloModalContext) {
   const [board, card] = await Promise.all([
     t.board('id').catch(() => null),
-    t.card ? t.card('id,name').catch(() => null) : Promise.resolve(null),
+    t.card ? t.card('id', 'name').catch(() => null) : Promise.resolve(null),
   ]);
-  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-rest-context-fix1' });
+  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-card-context-fix2' });
   if (board?.id) params.set('boardId', board.id);
   if (card?.id) params.set('cardId', card.id);
   if (card?.name) params.set('cardName', card.name);
@@ -97,7 +97,7 @@ async function createLabCard(t: TrelloModalContext) {
       },
     });
 
-    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-rest-context-fix1`;
+    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-card-context-fix2`;
     await t.modal({
       title: 'Lab Reactor',
       url: getSignedUrl(t, url),
@@ -113,7 +113,7 @@ async function openBoardCreatePanel(t: TrelloModalContext) {
   try {
     const board = await t.board('id');
     const boardId = board.id ?? '';
-    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-rest-context-fix1`;
+    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-card-context-fix2`;
     await t.modal({
       title: 'Créer fiche Lab Reactor',
       url: getSignedUrl(t, url),
