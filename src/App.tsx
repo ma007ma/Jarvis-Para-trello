@@ -42,6 +42,7 @@ const AUTOSAVE_DELAY_MS = 800;
 const POLL_INTERVAL_MS = 8000;
 const REQUIRED_MAPPING_COUNT = FIELD_REGISTRY.length;
 const PLUGIN_DATA_KEY = 'labReactorState';
+const FORCE_VISIBLE_FIELD_SYNC = true;
 const QUICK_FIELD_COLUMNS: FieldKey[][] = [
   ['sef_contact_name', 'sef_contact_phone', 'sef_contact_email', 'sef_program'],
   ['sef_start_time', 'sef_end_time', 'sef_room'],
@@ -185,8 +186,9 @@ export default function App() {
         return;
       }
 
-      let fields = await getBoardCustomFields(nextContext.boardId);
-      let nextMapping = buildFieldMapping(fields);
+      const ensureResult = await ensureCustomFields(nextContext.boardId);
+      const fields = await getBoardCustomFields(nextContext.boardId);
+      const nextMapping = Object.keys(ensureResult.mapping).length ? ensureResult.mapping : buildFieldMapping(fields);
 
       const items = await getCardCustomFieldItems(nextContext.cardId);
       const nextState = mapTrelloToLabState(fields, items);
@@ -196,7 +198,7 @@ export default function App() {
       setState(nextState);
       setActiveSession(getActiveSessionNumber(nextState));
       setSyncStatus('synced');
-      setMessage('Carte Trello synchronisée.');
+      setMessage(ensureResult.errors.length ? `Carte Trello synchronisée, ${ensureResult.errors.length} champ(s) à vérifier.` : 'Carte Trello synchronisée.');
       setDidLoad(true);
       window.setTimeout(() => {
         isApplyingRemote.current = false;
@@ -225,18 +227,34 @@ export default function App() {
       setSyncStatus('saving');
       setMessage('Sauvegarde dans Trello...');
       try {
-        await saveDurableState(context.boardId, context.cardId, stateToSave);
-
-        if (Object.keys(mapping).length >= REQUIRED_MAPPING_COUNT) {
-          const payload = mapLabStateToTrelloPayload(stateToSave, mapping);
-          if (payload.length) {
-            await updateCardCustomFields(context.cardId, payload).catch(() => undefined);
-            setState((current) => ({ ...current, sef_sync_hash: payload.find((item) => item.fieldKey === 'sef_sync_hash')?.value?.text ?? current.sef_sync_hash }));
+        let activeMapping = mapping;
+        if (Object.keys(activeMapping).length < REQUIRED_MAPPING_COUNT) {
+          const ensureResult = await ensureCustomFields(context.boardId);
+          activeMapping = ensureResult.mapping;
+          setMapping(activeMapping);
+          if (ensureResult.errors.length) {
+            throw new Error(`Impossible de préparer tous les champs Trello: ${ensureResult.errors.slice(0, 2).join(' | ')}`);
           }
         }
 
+        await saveDurableState(context.boardId, context.cardId, stateToSave);
+
+        if (Object.keys(activeMapping).length >= REQUIRED_MAPPING_COUNT) {
+          const visibleState = FORCE_VISIBLE_FIELD_SYNC ? { ...stateToSave, sef_sync_hash: null } : stateToSave;
+          const payload = mapLabStateToTrelloPayload(visibleState, activeMapping);
+          if (payload.length) {
+            await updateCardCustomFields(context.cardId, payload);
+            setState((current) => ({
+              ...current,
+              sef_sync_hash: payload.find((item) => item.fieldKey === 'sef_sync_hash')?.value?.text ?? current.sef_sync_hash,
+            }));
+          }
+        } else {
+          throw new Error('Champs personnalisés Trello incomplets. La sauvegarde visible sur la carte est impossible.');
+        }
+
         setSyncStatus('synced');
-        setMessage('Synchronisé.');
+        setMessage('Synchronisé dans la carte Trello.');
       } catch (error) {
         setSyncStatus('error');
         setMessage(error instanceof Error ? error.message : 'Erreur de sauvegarde.');
