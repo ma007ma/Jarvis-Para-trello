@@ -135,6 +135,7 @@ export default function App() {
   const lastDurableHash = useRef<string | null>(null);
   const lastVisibleFieldSyncAt = useRef(0);
   const retryTimer = useRef<number | null>(null);
+  const autoOpenAttempted = useRef(false);
 
   const validation = useMemo(() => validateLabState(state), [state]);
   const calendarMonths = useMemo(() => generateSchoolCalendarMonths(state.sef_school_year), [state.sef_school_year]);
@@ -362,6 +363,31 @@ export default function App() {
   useEffect(() => {
     void loadFromTrello();
   }, [loadFromTrello]);
+
+  useEffect(() => {
+    if (!didLoad || autoOpenAttempted.current || !context.boardId || !context.cardId) return;
+    const params = new URLSearchParams(window.location.search);
+    if (params.get('autoOpen') !== '1') return;
+
+    autoOpenAttempted.current = true;
+    if (!shouldAutoOpenModal(context.cardId)) return;
+
+    const t = window.TrelloPowerUp?.iframe?.(TRELLO_IFRAME_OPTIONS);
+    if (!t) return;
+    params.delete('autoOpen');
+    params.delete('section');
+    params.set('panel', 'lab');
+    params.set('boardId', context.boardId);
+    params.set('cardId', context.cardId);
+    if (context.cardName) params.set('cardName', context.cardName);
+    const url = `./lab.html?${params.toString()}`;
+    void t.modal({
+      title: 'Lab Reactor',
+      url: t.signUrl ? t.signUrl(url) : url,
+      height: 920,
+      fullscreen: true,
+    }).catch(() => undefined);
+  }, [context.boardId, context.cardId, context.cardName, didLoad]);
 
   useEffect(() => {
     if (!didLoad || isApplyingRemote.current) return;
@@ -902,6 +928,18 @@ function formatSaveMessage(storage: DurableStorage, mirroredVisibleFields: boole
 
 function localDraftKey(boardId: string, cardId: string): string {
   return `${LOCAL_DRAFT_PREFIX}${boardId}:${cardId}`;
+}
+
+function shouldAutoOpenModal(cardId: string): boolean {
+  try {
+    const storageKey = `lab-reactor-auto-open:${cardId}`;
+    const lastOpenedAt = Number(window.sessionStorage.getItem(storageKey) ?? 0);
+    if (Date.now() - lastOpenedAt < 10 * 60 * 1000) return false;
+    window.sessionStorage.setItem(storageKey, String(Date.now()));
+  } catch {
+    // If sessionStorage is unavailable, opening once per iframe load is still safer than crashing the Power-Up.
+  }
+  return true;
 }
 
 function readLocalDraft(boardId: string, cardId: string): SavedStateSource | null {

@@ -22,7 +22,7 @@
       (function () {
         var API_KEY = 'a9936eee9f445b63329fe1ab29b41e1f';
         var API_BASE = 'https://api.trello.com/1';
-        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-plugin-data1';
+        var PANEL_URL = './lab.html?panel=lab&v=lab-reactor-20260709-auto-open1';
         var ICON_URL = 'https://ma007ma.github.io/Jarvis-Para-trello/icon-gray.svg';
 
         function signedUrl(t, url) {
@@ -30,17 +30,18 @@
           return t && t.signUrl ? t.signUrl(target) : target;
         }
 
-        function panelUrlWithContext(t) {
+        function panelUrlWithContext(t, options) {
           return Promise.all([
             t.board ? t.board('id').catch(function () { return null; }) : Promise.resolve(null),
             t.card ? t.card('id', 'name').catch(function () { return null; }) : Promise.resolve(null)
           ]).then(function (results) {
             var board = results[0] || {};
             var card = results[1] || {};
-            var url = './lab.html?panel=lab&v=lab-reactor-20260709-plugin-data1';
+            var url = './lab.html?panel=lab&v=lab-reactor-20260709-auto-open1';
             if (board.id) url += '&boardId=' + encodeURIComponent(board.id);
             if (card.id) url += '&cardId=' + encodeURIComponent(card.id);
             if (card.name) url += '&cardName=' + encodeURIComponent(card.name);
+            if (options && options.autoOpen) url += '&autoOpen=1&section=card-back';
             return url;
           });
         }
@@ -121,7 +122,7 @@
               var url = './lab.html?panel=lab&mode=create&boardId=' + encodeURIComponent(boardId) +
                 '&cardId=' + encodeURIComponent(card.id) +
                 '&cardName=' + encodeURIComponent(card.name) +
-                '&v=lab-reactor-20260709-plugin-data1';
+                '&v=lab-reactor-20260709-auto-open1';
               return t.modal({
                 title: 'Lab Reactor',
                 url: signedUrl(t, url),
@@ -139,7 +140,7 @@
             .then(function (board) {
               var boardId = board && board.id ? board.id : '';
               var url = './lab.html?panel=lab&mode=board-create&boardId=' + encodeURIComponent(boardId) +
-                '&v=lab-reactor-20260709-plugin-data1';
+                '&v=lab-reactor-20260709-auto-open1';
               return t.modal({
                 title: 'Creer fiche Lab Reactor',
                 url: signedUrl(t, url),
@@ -173,7 +174,7 @@
               ];
             },
             'card-back-section': function (t) {
-              return panelUrlWithContext(t).then(function (url) {
+              return panelUrlWithContext(t, { autoOpen: true }).then(function (url) {
                 return {
                 title: 'Lab Reactor',
                 icon: ICON_URL,

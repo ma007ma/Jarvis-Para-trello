@@ -26,15 +26,19 @@ function getSignedUrl(t: { signUrl?: (url: string) => string }, url: string) {
   return t.signUrl ? t.signUrl(url) : url;
 }
 
-async function getPanelUrlWithContext(t: TrelloModalContext) {
+async function getPanelUrlWithContext(t: TrelloModalContext, options: { autoOpen?: boolean } = {}) {
   const [board, card] = await Promise.all([
     t.board('id').catch(() => null),
     t.card ? t.card('id', 'name').catch(() => null) : Promise.resolve(null),
   ]);
-  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-plugin-data1' });
+  const params = new URLSearchParams({ panel: 'lab', v: 'lab-reactor-20260709-auto-open1' });
   if (board?.id) params.set('boardId', board.id);
   if (card?.id) params.set('cardId', card.id);
   if (card?.name) params.set('cardName', card.name);
+  if (options.autoOpen) {
+    params.set('autoOpen', '1');
+    params.set('section', 'card-back');
+  }
   return `./lab.html?${params.toString()}`;
 }
 
@@ -97,7 +101,7 @@ async function createLabCard(t: TrelloModalContext) {
       },
     });
 
-    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-plugin-data1`;
+    const url = `./lab.html?panel=lab&mode=create&boardId=${encodeURIComponent(boardId)}&cardId=${encodeURIComponent(card.id)}&cardName=${encodeURIComponent(card.name)}&v=lab-reactor-20260709-auto-open1`;
     await t.modal({
       title: 'Lab Reactor',
       url: getSignedUrl(t, url),
@@ -113,7 +117,7 @@ async function openBoardCreatePanel(t: TrelloModalContext) {
   try {
     const board = await t.board('id');
     const boardId = board.id ?? '';
-    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-plugin-data1`;
+    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-auto-open1`;
     await t.modal({
       title: 'Créer fiche Lab Reactor',
       url: getSignedUrl(t, url),
@@ -142,7 +146,7 @@ if (window.TrelloPowerUp && !isPanel) {
       },
     ],
     'card-back-section': async (t: TrelloModalContext) => {
-      const url = await getPanelUrlWithContext(t);
+      const url = await getPanelUrlWithContext(t, { autoOpen: true });
       return {
         title: 'Lab Reactor',
         icon: ICON_URL,
