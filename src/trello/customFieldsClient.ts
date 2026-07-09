@@ -55,6 +55,18 @@ export interface TrelloFieldPayload {
   empty?: boolean;
 }
 
+export interface TrelloList {
+  id: string;
+  name: string;
+}
+
+export interface TrelloCard {
+  id: string;
+  name: string;
+  url?: string;
+  shortUrl?: string;
+}
+
 export const LAB_REACTOR_PAYLOAD_FIELD_NAME = 'Lab Reactor payload';
 
 interface ClientOptions {
@@ -192,7 +204,20 @@ export class TrelloCustomFieldsClient {
     await Promise.all(writes);
   }
 
-  private async request<T>(path: string, options: { method?: string; body?: unknown } = {}): Promise<T> {
+  async getOpenLists(boardId: string): Promise<TrelloList[]> {
+    return this.request<TrelloList[]>(`/boards/${boardId}/lists`, {
+      query: { filter: 'open' },
+    });
+  }
+
+  async createCard(idList: string, name: string, desc: string): Promise<TrelloCard> {
+    return this.request<TrelloCard>('/cards', {
+      method: 'POST',
+      query: { idList, name, desc },
+    });
+  }
+
+  private async request<T>(path: string, options: { method?: string; body?: unknown; query?: Record<string, string> } = {}): Promise<T> {
     const url = new URL(`${this.apiBase}${path}`);
     const token = await this.tokenProvider();
 
@@ -204,6 +229,7 @@ export class TrelloCustomFieldsClient {
     if (token) {
       url.searchParams.set('token', token);
     }
+    Object.entries(options.query ?? {}).forEach(([key, value]) => url.searchParams.set(key, value));
 
     const response = await this.fetcher(url.toString(), {
       method: options.method ?? 'GET',
@@ -341,6 +367,13 @@ export async function readLabPayloadField(boardId: string, cardId: string): Prom
 
 export async function writeLabPayloadField(boardId: string, cardId: string, value: string): Promise<void> {
   return new TrelloCustomFieldsClient().writeCardTextCustomField(boardId, cardId, LAB_REACTOR_PAYLOAD_FIELD_NAME, value);
+}
+
+export async function createLabCardOnBoard(boardId: string, name: string, desc: string): Promise<TrelloCard> {
+  const client = new TrelloCustomFieldsClient();
+  const lists = await client.getOpenLists(boardId);
+  if (!lists.length) throw new Error('Aucune liste ouverte trouvée sur ce tableau.');
+  return client.createCard(lists[0].id, name, desc);
 }
 
 function readItemValue(definition: FieldDefinition, field: TrelloCustomField, item?: TrelloCustomFieldItem): LabValue {

@@ -26,6 +26,7 @@ import {
 import { validateLabState } from './domain/validationEngine';
 import {
   buildFieldMapping,
+  createLabCardOnBoard,
   ensureCustomFields,
   getBoardCustomFields,
   getCardCustomFieldItems,
@@ -262,6 +263,40 @@ export default function App() {
     },
     [context.boardId, context.cardId, mapping, state],
   );
+
+  const createTrelloCardFromBoard = useCallback(async () => {
+    if (!context.boardId) {
+      setSyncStatus('error');
+      setMessage('Impossible de créer la carte: contexte tableau Trello manquant.');
+      return;
+    }
+
+    setSyncStatus('saving');
+    setMessage('Création de la carte Trello...');
+    try {
+      const cardName = state.sef_school_name ? `Lab Reactor - ${state.sef_school_name}` : 'Nouvelle fiche Lab Reactor';
+      const card = await createLabCardOnBoard(context.boardId, cardName, 'Fiche créée depuis le Power-Up Lab Reactor.');
+      const ensureResult = await ensureCustomFields(context.boardId);
+      if (ensureResult.errors.length) {
+        throw new Error(`Carte créée, mais champs Trello incomplets: ${ensureResult.errors.slice(0, 2).join(' | ')}`);
+      }
+
+      await saveDurableState(context.boardId, card.id, state);
+      const visibleState = { ...state, sef_sync_hash: null };
+      const payload = mapLabStateToTrelloPayload(visibleState, ensureResult.mapping);
+      if (payload.length) {
+        await updateCardCustomFields(card.id, payload);
+      }
+
+      setContext({ boardId: context.boardId, cardId: card.id, cardName: card.name });
+      setMapping(ensureResult.mapping);
+      setSyncStatus('synced');
+      setMessage('Carte créée et champs personnalisés sauvegardés dans Trello.');
+    } catch (error) {
+      setSyncStatus('error');
+      setMessage(error instanceof Error ? error.message : 'Erreur pendant la création de la carte Trello.');
+    }
+  }, [context.boardId, state]);
 
   useEffect(() => {
     void loadFromTrello();
@@ -589,6 +624,11 @@ export default function App() {
       </div>
 
       <footer className="lab-actionbar">
+        {context.boardId && !context.cardId && (
+          <button type="button" className="primary-action" onClick={createTrelloCardFromBoard}>
+            <Plus size={18} />Créer carte Trello
+          </button>
+        )}
         <button type="button" onClick={() => window.print()}><Printer size={18} />Imprimer</button>
         <span>Autosave Trello actif. Aucun secret stocké dans le frontend.</span>
         <strong>{hasTrelloContext ? 'Connecté à Trello' : 'Mode mock/local'}</strong>

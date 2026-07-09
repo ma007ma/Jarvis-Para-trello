@@ -115,6 +115,24 @@
             });
         }
 
+        function openBoardCreatePanel(t) {
+          return t.board('id')
+            .then(function (board) {
+              var boardId = board && board.id ? board.id : '';
+              var url = './lab.html?panel=lab&mode=board-create&boardId=' + encodeURIComponent(boardId) +
+                '&v=lab-reactor-20260709-board-create-sync3';
+              return t.modal({
+                title: 'Creer fiche Lab Reactor',
+                url: signedUrl(t, url),
+                height: 920,
+                fullscreen: true
+              });
+            })
+            .catch(function (error) {
+              return alertUser(t, 'Lab Reactor: ' + (error && error.message ? error.message : String(error)), 'error');
+            });
+        }
+
         if (!window.TrelloPowerUp) return;
 
         try {
@@ -131,7 +149,7 @@
                 {
                   text: 'Créer fiche Lab Reactor',
                   icon: ICON_URL,
-                  callback: createLabCard
+                  callback: openBoardCreatePanel
                 },
                 {
                   text: 'Ouvrir Lab Reactor',

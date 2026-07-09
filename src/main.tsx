@@ -97,6 +97,22 @@ async function createLabCard(t: TrelloModalContext) {
   }
 }
 
+async function openBoardCreatePanel(t: TrelloModalContext) {
+  try {
+    const board = await t.board('id');
+    const boardId = board.id ?? '';
+    const url = `./lab.html?panel=lab&mode=board-create&boardId=${encodeURIComponent(boardId)}&v=lab-reactor-20260709-board-create-sync3`;
+    await t.modal({
+      title: 'Créer fiche Lab Reactor',
+      url: getSignedUrl(t, url),
+      height: 920,
+      fullscreen: true,
+    });
+  } catch (error) {
+    await alertUser(t, `Lab Reactor: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
 if (window.TrelloPowerUp && !isPanel) {
   window.TrelloPowerUp.initialize({
     'card-buttons': () => [
@@ -110,7 +126,7 @@ if (window.TrelloPowerUp && !isPanel) {
       {
         text: 'Créer fiche Lab Reactor',
         icon: ICON_URL,
-        callback: createLabCard,
+        callback: openBoardCreatePanel,
       },
       {
         text: 'Ouvrir Lab Reactor',
