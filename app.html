@@ -1,4 +1,4 @@
-<!doctype html>
+﻿<!doctype html>
 <html lang="fr">
   <head>
     <meta charset="UTF-8" />
@@ -14,7 +14,7 @@
     <main>
       <div>
         <strong>Lab Reactor</strong>
-        <p>Connecteur Trello chargé. Ouvrez une carte Trello pour afficher la fiche.</p>
+        <p>Connecteur Trello charge. Ouvrez une carte Trello pour afficher la fiche.</p>
       </div>
     </main>
     <script src="https://p.trellocdn.com/power-up.min.js"></script>
@@ -107,13 +107,13 @@
               return trelloFetch('/boards/' + boardId + '/lists?filter=open', tokenValue);
             })
             .then(function (lists) {
-              if (!lists || !lists.length) throw new Error('Aucune liste ouverte trouvée sur ce tableau.');
+              if (!lists || !lists.length) throw new Error('Aucune liste ouverte trouvee sur ce tableau.');
               return trelloFetch('/cards', tokenValue, {
                 method: 'POST',
                 query: {
                   idList: lists[0].id,
                   name: 'Nouvelle fiche Lab Reactor',
-                  desc: 'Fiche créée depuis le Power-Up Lab Reactor.'
+                  desc: 'Fiche creee depuis le Power-Up Lab Reactor.'
                 }
               });
             })
@@ -166,7 +166,7 @@
             'board-buttons': function () {
               return [
                 {
-                  text: 'Créer fiche Lab Reactor',
+                  text: 'Creer fiche Lab Reactor',
                   icon: ICON_URL,
                   callback: openBoardCreatePanel
                 }
